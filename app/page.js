@@ -19,6 +19,10 @@ export default function HomePage() {
   const [agencies, setAgencies] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [qrPreview, setQrPreview] = useState(null);
+  const [scanToken, setScanToken] = useState("");
+  const [scannedDocument, setScannedDocument] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState("");
+  const [movementNotes, setMovementNotes] = useState("");
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -163,6 +167,59 @@ export default function HomePage() {
     popup.document.close();
   }
 
+  async function scanDocument(event) {
+    event.preventDefault();
+    const token = scanToken.trim();
+    if (!token) return;
+
+    setBusy(true);
+    setMessage(null);
+    const { data, error } = await supabase
+      .from("documents")
+      .select("id, qr_token, status, last_movement_at, case_files(number), document_types(name), agencies(name)")
+      .eq("qr_token", token)
+      .maybeSingle();
+    setBusy(false);
+
+    if (error || !data) {
+      setScannedDocument(null);
+      setMessage({ type: "error", text: "No encontramos un documento con este código QR." });
+      return;
+    }
+
+    setScannedDocument(data);
+    setScanToken("");
+    setRejectionReason("");
+    setMovementNotes("");
+  }
+
+  async function registerMovement(status) {
+    if (!scannedDocument) return;
+    setBusy(true);
+    setMessage(null);
+
+    const { error } = await supabase.from("movements").insert({
+      document_id: scannedDocument.id,
+      status,
+      rejection_reason: status === "RECHAZADO" ? rejectionReason.trim() || null : null,
+      notes: movementNotes.trim() || null,
+      created_by: session.user.id,
+    });
+    setBusy(false);
+
+    if (error) {
+      setMessage({ type: "error", text: "No fue posible registrar el movimiento." });
+      return;
+    }
+
+    const updated = { ...scannedDocument, status, last_movement_at: new Date().toISOString() };
+    setScannedDocument(updated);
+    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status } : document));
+    setRejectionReason("");
+    setMovementNotes("");
+    setMessage({ type: "success", text: `Movimiento registrado: ${status.replaceAll("_", " ")}.` });
+  }
+
   if (loadingSession) {
     return <main className="center-shell">Cargando Ratreodoc…</main>;
   }
@@ -218,6 +275,36 @@ export default function HomePage() {
       </form>
       </div>
       {message && <div className={`notice page-notice ${message.type}`}>{message.text}</div>}
+      <section className="scanner-section">
+        <div className="scanner-heading"><div><p className="eyebrow">OPERACIÓN RÁPIDA</p><h2>Escanear documento</h2></div><span>El lector funciona como teclado</span></div>
+        <form className="scan-form" onSubmit={scanDocument}>
+          <input value={scanToken} onChange={(event) => setScanToken(event.target.value)} placeholder="Escanea el QR aquí" aria-label="Código QR" />
+          <button type="submit" disabled={busy}>Buscar documento</button>
+        </form>
+        {scannedDocument && (
+          <div className="scan-result">
+            <div className="document-summary">
+              <div><span>Expediente</span><strong>{scannedDocument.case_files.number}</strong></div>
+              <div><span>Documento</span><strong>{scannedDocument.document_types.name}</strong></div>
+              <div><span>Dependencia</span><strong>{scannedDocument.agencies.name}</strong></div>
+              <div><span>Estatus actual</span><strong className="status-pill">{scannedDocument.status.replaceAll("_", " ")}</strong></div>
+              <div><span>Último movimiento</span><strong>{new Date(scannedDocument.last_movement_at).toLocaleString("es-MX")}</strong></div>
+            </div>
+            <div className="movement-fields">
+              <label>Motivo del rechazo (opcional)<input value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label>
+              <label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label>
+            </div>
+            <div className="movement-actions">
+              <button onClick={() => registerMovement("ENVIADO")} disabled={busy}>Enviar</button>
+              <button onClick={() => registerMovement("EN_OFICINA")} disabled={busy}>Recibir en oficina</button>
+              <button onClick={() => registerMovement("AUTORIZADO")} disabled={busy}>Autorizar</button>
+              <button className="danger-button" onClick={() => registerMovement("RECHAZADO")} disabled={busy}>Rechazar</button>
+              <button onClick={() => registerMovement("EN_CORRECCION")} disabled={busy}>Mandar a corrección</button>
+              <button onClick={() => registerMovement("REENVIADO")} disabled={busy}>Reenviar</button>
+            </div>
+          </div>
+        )}
+      </section>
       <section className="documents-section">
         <div><p className="eyebrow">DOCUMENTOS RECIENTES</p><h2>QR listos para imprimir</h2></div>
         {documents.length === 0 ? <p className="empty-state">Todavía no hay documentos registrados.</p> : (
