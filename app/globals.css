@@ -34,5 +34,20 @@ button:disabled { opacity:.65; cursor:wait; }
 .case-panel label { margin-top:26px; }
 .case-panel input { min-height:56px; font-size:18px; }
 .page-notice { max-width:660px; margin-top:20px; }
+.documents-section { margin-top:48px; }
+.documents-section h2 { margin:0 0 20px; color:var(--navy); }
+.documents-list { display:grid; gap:10px; }
+.document-row { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:18px 20px; border:1px solid var(--line); border-radius:12px; background:white; }
+.document-row strong,.document-row span { display:block; }
+.document-row span { margin-top:5px; color:var(--muted); font-size:14px; }
+.empty-state { padding:22px; border:1px dashed #b9c5cc; border-radius:12px; color:var(--muted); }
+.modal-backdrop { position:fixed; inset:0; z-index:10; display:grid; place-items:center; padding:20px; background:rgba(15,31,45,.72); }
+.qr-modal { position:relative; width:min(430px,100%); padding:30px; border-radius:16px; background:white; text-align:center; box-shadow:0 24px 70px rgba(0,0,0,.3); }
+.qr-modal h2 { margin:0; color:var(--navy); }
+.qr-modal p:not(.eyebrow) { color:var(--muted); }
+.qr-modal img { display:block; width:min(320px,100%); margin:16px auto; }
+.qr-modal > button:last-child { width:100%; }
+.modal-close { position:absolute; top:10px; right:12px; min-height:36px; padding:0 10px; background:transparent; color:var(--muted); font-size:28px; }
+.modal-close:hover { background:#edf1f3; }
 @media (max-width:800px) { .workspace-grid { grid-template-columns:1fr; } }
-@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .login-copy .intro { margin-bottom:0; } .panel { padding:23px; } .page-heading { align-items:flex-start; } .page-heading h1 { font-size:34px; } }
+@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .login-copy .intro { margin-bottom:0; } .panel { padding:23px; } .page-heading { align-items:flex-start; } .page-heading h1 { font-size:34px; } .document-row { align-items:flex-start; flex-direction:column; } .document-row button { width:100%; } }

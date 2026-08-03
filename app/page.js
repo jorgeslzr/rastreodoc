@@ -17,6 +17,8 @@ export default function HomePage() {
   const [agency, setAgency] = useState("");
   const [documentTypes, setDocumentTypes] = useState([]);
   const [agencies, setAgencies] = useState([]);
+  const [documents, setDocuments] = useState([]);
+  const [qrPreview, setQrPreview] = useState(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -40,10 +42,12 @@ export default function HomePage() {
       supabase.from("case_files").select("id, number").order("created_at", { ascending: false }),
       supabase.from("document_types").select("id, name").order("name"),
       supabase.from("agencies").select("id, name").order("name"),
-    ]).then(([caseResult, typeResult, agencyResult]) => {
+      supabase.from("documents").select("id, qr_token, status, case_files(number), document_types(name), agencies(name)").order("created_at", { ascending: false }),
+    ]).then(([caseResult, typeResult, agencyResult, documentResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
       setAgencies(agencyResult.data ?? []);
+      setDocuments(documentResult.data ?? []);
     });
   }, [session]);
 
@@ -123,11 +127,11 @@ export default function HomePage() {
       return;
     }
 
-    const { error } = await supabase.from("documents").insert({
+    const { data, error } = await supabase.from("documents").insert({
       case_file_id: selectedCaseId,
       document_type_id: typeRecord.id,
       agency_id: agencyRecord.id,
-    });
+    }).select("id, qr_token, status, case_files(number), document_types(name), agencies(name)").single();
     setBusy(false);
 
     if (error) {
@@ -137,9 +141,26 @@ export default function HomePage() {
 
     setDocumentTypes((current) => current.some(({ id }) => id === typeRecord.id) ? current : [...current, typeRecord]);
     setAgencies((current) => current.some(({ id }) => id === agencyRecord.id) ? current : [...current, agencyRecord]);
+    setDocuments((current) => [data, ...current]);
     setDocumentType("");
     setAgency("");
     setMessage({ type: "success", text: "Documento agregado con estatus EN OFICINA." });
+  }
+
+  async function showQr(document) {
+    const QRCode = (await import("qrcode")).default;
+    const dataUrl = await QRCode.toDataURL(document.qr_token, { width: 360, margin: 2 });
+    setQrPreview({ document, dataUrl });
+  }
+
+  function printQr() {
+    const popup = window.open("", "_blank", "width=520,height=680");
+    if (!popup || !qrPreview) return;
+
+    const { document, dataUrl } = qrPreview;
+    const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
+    popup.document.write(`<!doctype html><html><head><title>QR ${escapeHtml(document.case_files.number)}</title><style>body{font-family:Arial;text-align:center;padding:30px}img{width:320px;max-width:100%}h1{font-size:24px;margin:0 0 8px}p{margin:6px}</style></head><body><h1>Expediente ${escapeHtml(document.case_files.number)}</h1><p>${escapeHtml(document.document_types.name)}</p><p>${escapeHtml(document.agencies.name)}</p><img src="${dataUrl}" onload="window.print()"><p>Ratreodoc</p></body></html>`);
+    popup.document.close();
   }
 
   if (loadingSession) {
@@ -197,6 +218,31 @@ export default function HomePage() {
       </form>
       </div>
       {message && <div className={`notice page-notice ${message.type}`}>{message.text}</div>}
+      <section className="documents-section">
+        <div><p className="eyebrow">DOCUMENTOS RECIENTES</p><h2>QR listos para imprimir</h2></div>
+        {documents.length === 0 ? <p className="empty-state">Todavía no hay documentos registrados.</p> : (
+          <div className="documents-list">
+            {documents.map((document) => (
+              <article className="document-row" key={document.id}>
+                <div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name} — {document.status.replaceAll("_", " ")}</span></div>
+                <button className="secondary" onClick={() => showQr(document)}>Ver QR</button>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+      {qrPreview && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Código QR del documento">
+          <section className="qr-modal">
+            <button className="modal-close" onClick={() => setQrPreview(null)} aria-label="Cerrar">×</button>
+            <p className="eyebrow">CÓDIGO QR</p>
+            <h2>Expediente {qrPreview.document.case_files.number}</h2>
+            <p>{qrPreview.document.document_types.name} · {qrPreview.document.agencies.name}</p>
+            <img src={qrPreview.dataUrl} alt={`QR del expediente ${qrPreview.document.case_files.number}`} />
+            <button onClick={printQr}>Imprimir QR</button>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
