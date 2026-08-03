@@ -27,6 +27,12 @@ button:disabled { opacity:.65; cursor:wait; }
 .notice.error { background:#fbeaea; color:var(--danger); }
 .notice.success { background:#eaf7f1; color:var(--success); }
 .page-heading { display:flex; align-items:end; justify-content:space-between; gap:24px; margin-bottom:32px; }
+.dashboard-cards { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:28px; }
+.dashboard-card { min-height:94px; padding:14px; border:1px solid var(--line); background:white; color:var(--navy); text-align:left; }
+.dashboard-card:hover,.dashboard-card.active { border-color:var(--blue); background:#e9f3f7; }
+.dashboard-card strong,.dashboard-card span { display:block; }
+.dashboard-card strong { font:700 30px Georgia,serif; }
+.dashboard-card span { margin-top:5px; color:var(--muted); font-size:12px; }
 .secondary { min-height:42px; border:1px solid var(--line); background:white; color:var(--navy); }
 .secondary:hover { background:#edf1f3; }
 .workspace-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; align-items:start; }
@@ -53,10 +59,12 @@ button:disabled { opacity:.65; cursor:wait; }
 .danger-button:hover { background:#812323; }
 .documents-section { margin-top:48px; }
 .documents-section h2 { margin:0 0 20px; color:var(--navy); }
+.document-filters { display:grid; grid-template-columns:1fr 230px; gap:10px; margin-bottom:16px; }
 .documents-list { display:grid; gap:10px; }
 .document-row { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:18px 20px; border:1px solid var(--line); border-radius:12px; background:white; }
 .document-row strong,.document-row span { display:block; }
 .document-row span { margin-top:5px; color:var(--muted); font-size:14px; }
+.row-actions { display:flex; gap:8px; }
 .empty-state { padding:22px; border:1px dashed #b9c5cc; border-radius:12px; color:var(--muted); }
 .modal-backdrop { position:fixed; inset:0; z-index:10; display:grid; place-items:center; padding:20px; background:rgba(15,31,45,.72); }
 .qr-modal { position:relative; width:min(430px,100%); padding:30px; border-radius:16px; background:white; text-align:center; box-shadow:0 24px 70px rgba(0,0,0,.3); }
@@ -66,6 +74,17 @@ button:disabled { opacity:.65; cursor:wait; }
 .qr-modal > button:last-child { width:100%; }
 .modal-close { position:absolute; top:10px; right:12px; min-height:36px; padding:0 10px; background:transparent; color:var(--muted); font-size:28px; }
 .modal-close:hover { background:#edf1f3; }
+.history-modal { position:relative; width:min(650px,100%); max-height:85vh; overflow:auto; padding:30px; border-radius:16px; background:white; box-shadow:0 24px 70px rgba(0,0,0,.3); }
+.history-modal h2 { margin:0; color:var(--navy); }
+.history-document-name { color:var(--muted); }
+.timeline { margin:24px 0 0; padding:0; list-style:none; }
+.timeline li { position:relative; padding:0 0 22px 24px; border-left:2px solid var(--line); }
+.timeline li::before { content:""; position:absolute; top:3px; left:-7px; width:12px; height:12px; border-radius:50%; background:var(--blue); }
+.timeline li > span,.timeline li > strong { display:block; }
+.timeline li > span { color:var(--muted); font-size:12px; }
+.timeline li > strong { margin-top:4px; color:var(--navy); }
+.timeline li p { margin:7px 0 0; font-size:14px; }
 @media (max-width:900px) { .document-summary { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:1000px) { .dashboard-cards { grid-template-columns:repeat(3,1fr); } }
 @media (max-width:800px) { .workspace-grid { grid-template-columns:1fr; } }
-@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .login-copy .intro { margin-bottom:0; } .panel { padding:23px; } .page-heading,.scanner-heading { align-items:flex-start; } .page-heading h1 { font-size:34px; } .scan-form,.movement-fields,.movement-actions { grid-template-columns:1fr; } .document-row { align-items:flex-start; flex-direction:column; } .document-row button { width:100%; } }
+@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .login-copy .intro { margin-bottom:0; } .panel { padding:23px; } .page-heading,.scanner-heading { align-items:flex-start; } .page-heading h1 { font-size:34px; } .scan-form,.movement-fields,.movement-actions,.document-filters { grid-template-columns:1fr; } .document-row { align-items:flex-start; flex-direction:column; } .row-actions,.document-row button { width:100%; } .dashboard-cards { grid-template-columns:repeat(2,1fr); } }

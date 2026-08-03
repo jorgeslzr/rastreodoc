@@ -23,6 +23,9 @@ export default function HomePage() {
   const [scannedDocument, setScannedDocument] = useState(null);
   const [rejectionReason, setRejectionReason] = useState("");
   const [movementNotes, setMovementNotes] = useState("");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [historyPreview, setHistoryPreview] = useState(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -220,6 +223,23 @@ export default function HomePage() {
     setMessage({ type: "success", text: `Movimiento registrado: ${status.replaceAll("_", " ")}.` });
   }
 
+  async function showHistory(document) {
+    setBusy(true);
+    const { data, error } = await supabase
+      .from("movements")
+      .select("id, status, occurred_at, rejection_reason, notes")
+      .eq("document_id", document.id)
+      .order("occurred_at", { ascending: false });
+    setBusy(false);
+
+    if (error) {
+      setMessage({ type: "error", text: "No fue posible consultar el historial." });
+      return;
+    }
+
+    setHistoryPreview({ document, movements: data });
+  }
+
   if (loadingSession) {
     return <main className="center-shell">Cargando Ratreodoc…</main>;
   }
@@ -244,12 +264,34 @@ export default function HomePage() {
     );
   }
 
+  const normalizedSearch = search.trim().toLocaleLowerCase("es-MX");
+  const filteredDocuments = documents.filter((document) => {
+    const matchesText = !normalizedSearch || [
+      document.case_files.number,
+      document.document_types.name,
+      document.agencies.name,
+    ].some((value) => value.toLocaleLowerCase("es-MX").includes(normalizedSearch));
+    return matchesText && (!statusFilter || document.status === statusFilter);
+  });
+  const statusCards = [
+    ["EN_OFICINA", "En oficina"], ["ENVIADO", "Enviados"],
+    ["RECHAZADO", "Rechazados"], ["EN_CORRECCION", "En corrección"],
+    ["AUTORIZADO", "Autorizados"], ["REENVIADO", "Reenviados"],
+  ];
+
   return (
     <main className="page-shell">
       <div className="page-heading">
         <div><p className="eyebrow">EXPEDIENTES</p><h1>Alta de expediente</h1></div>
         <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
       </div>
+      <section className="dashboard-cards" aria-label="Resumen de documentos">
+        {statusCards.map(([status, label]) => (
+          <button className={`dashboard-card ${statusFilter === status ? "active" : ""}`} key={status} onClick={() => setStatusFilter(statusFilter === status ? "" : status)}>
+            <strong>{documents.filter((document) => document.status === status).length}</strong><span>{label}</span>
+          </button>
+        ))}
+      </section>
       <div className="workspace-grid">
       <form className="panel case-panel" onSubmit={createCaseFile}>
         <div>
@@ -306,13 +348,20 @@ export default function HomePage() {
         )}
       </section>
       <section className="documents-section">
-        <div><p className="eyebrow">DOCUMENTOS RECIENTES</p><h2>QR listos para imprimir</h2></div>
-        {documents.length === 0 ? <p className="empty-state">Todavía no hay documentos registrados.</p> : (
+        <div><p className="eyebrow">CONSULTA</p><h2>Todos los documentos</h2></div>
+        <div className="document-filters">
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar expediente, documento o dependencia" aria-label="Buscar documentos" />
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filtrar por estatus">
+            <option value="">Todos los estatus</option>
+            {statusCards.map(([status, label]) => <option value={status} key={status}>{label}</option>)}
+          </select>
+        </div>
+        {filteredDocuments.length === 0 ? <p className="empty-state">No hay documentos que coincidan con la búsqueda.</p> : (
           <div className="documents-list">
-            {documents.map((document) => (
+            {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
                 <div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name} — {document.status.replaceAll("_", " ")}</span></div>
-                <button className="secondary" onClick={() => showQr(document)}>Ver QR</button>
+                <div className="row-actions"><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button></div>
               </article>
             ))}
           </div>
@@ -327,6 +376,21 @@ export default function HomePage() {
             <p>{qrPreview.document.document_types.name} · {qrPreview.document.agencies.name}</p>
             <img src={qrPreview.dataUrl} alt={`QR del expediente ${qrPreview.document.case_files.number}`} />
             <button onClick={printQr}>Imprimir QR</button>
+          </section>
+        </div>
+      )}
+      {historyPreview && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Historial del documento">
+          <section className="history-modal">
+            <button className="modal-close" onClick={() => setHistoryPreview(null)} aria-label="Cerrar">×</button>
+            <p className="eyebrow">HISTORIAL COMPLETO</p>
+            <h2>{historyPreview.document.case_files.number}</h2>
+            <p className="history-document-name">{historyPreview.document.document_types.name} · {historyPreview.document.agencies.name}</p>
+            <ol className="timeline">
+              {historyPreview.movements.map((movement) => (
+                <li key={movement.id}><span>{new Date(movement.occurred_at).toLocaleString("es-MX")}</span><strong>{movement.status.replaceAll("_", " ")}</strong>{movement.rejection_reason && <p><b>Motivo:</b> {movement.rejection_reason}</p>}{movement.notes && <p><b>Observaciones:</b> {movement.notes}</p>}</li>
+              ))}
+            </ol>
           </section>
         </div>
       )}
