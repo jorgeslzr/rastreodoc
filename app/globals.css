@@ -1,0 +1,26 @@
+:root {
+  --navy: #18324a;
+  --blue: #246b8e;
+  --gold: #e9b949;
+  --ink: #17232d;
+  --muted: #667580;
+  --line: #dce3e8;
+  --background: #f4f6f7;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--ink); font-family: Arial, sans-serif; }
+.site-header { min-height: 76px; display: flex; align-items: center; gap: 12px; padding: 0 max(24px, calc((100vw - 1080px) / 2)); background: var(--navy); color: white; }
+.site-header strong, .site-header span { display: block; }
+.site-header strong { font-size: 19px; }
+.site-header span { margin-top: 2px; color: #bfd0dc; font-size: 12px; }
+.brand-mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 10px; background: var(--gold); color: var(--navy); font: 700 24px Georgia, serif; }
+.page-shell { width: min(1080px, calc(100% - 32px)); margin: 0 auto; padding: 72px 0; }
+.eyebrow { margin: 0 0 10px; color: var(--blue); font-size: 12px; font-weight: 700; letter-spacing: .16em; }
+h1 { margin: 0; color: var(--navy); font: 700 clamp(34px, 5vw, 52px) Georgia, serif; }
+.intro { max-width: 670px; margin: 14px 0 36px; color: var(--muted); font-size: 18px; line-height: 1.55; }
+.status-card { display: flex; gap: 18px; max-width: 670px; padding: 26px; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: 0 7px 24px rgba(24, 50, 74, .06); }
+.status-card h2 { margin: 0 0 7px; color: var(--navy); font-size: 20px; }
+.status-card p { margin: 0; color: var(--muted); line-height: 1.5; }
+.status-icon { flex: 0 0 auto; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: #eaf7f1; color: #176b4d; font-size: 22px; font-weight: 700; }
+@media (max-width: 600px) { .site-header { padding: 0 18px; } .page-shell { padding-top: 44px; } .status-card { padding: 21px; } }
