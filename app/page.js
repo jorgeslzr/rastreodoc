@@ -46,6 +46,7 @@ export default function HomePage() {
   const [agency, setAgency] = useState("");
   const [documentTypes, setDocumentTypes] = useState([]);
   const [documents, setDocuments] = useState([]);
+  const [archivedDocuments, setArchivedDocuments] = useState([]);
   const [qrPreview, setQrPreview] = useState(null);
   const [scanToken, setScanToken] = useState("");
   const [scannedDocument, setScannedDocument] = useState(null);
@@ -98,11 +99,13 @@ export default function HomePage() {
       supabase.from("case_files").select("id, number").order("created_at", { ascending: false }),
       supabase.from("document_types").select("id, name").order("name"),
       supabase.from("documents").select("id, qr_token, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }),
+      supabase.from("documents").select("id, qr_token, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").not("archived_at", "is", null).order("archived_at", { ascending: false }),
       supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false }),
-    ]).then(([caseResult, typeResult, documentResult, movementResult]) => {
+    ]).then(([caseResult, typeResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
       setDocuments(documentResult.data ?? []);
+      setArchivedDocuments(archivedResult.data ?? []);
       setReportMovements(movementResult.data ?? []);
     });
   }, [session]);
@@ -379,7 +382,8 @@ export default function HomePage() {
     if (!confirmed) return;
     setBusy(true);
     setMessage(null);
-    const { error } = await supabase.from("documents").update({ archived_at: new Date().toISOString() }).eq("id", document.id);
+    const archivedAt = new Date().toISOString();
+    const { error } = await supabase.from("documents").update({ archived_at: archivedAt }).eq("id", document.id);
     setBusy(false);
 
     if (error) {
@@ -388,8 +392,25 @@ export default function HomePage() {
     }
 
     setDocuments((current) => current.filter((item) => item.id !== document.id));
+    setArchivedDocuments((current) => [{ ...document, archived_at: archivedAt }, ...current]);
     if (scannedDocument?.id === document.id) setScannedDocument(null);
     setMessage({ type: "success", text: "Documento archivado. Su historial se conservó." });
+  }
+
+  async function restoreDocument(document) {
+    setBusy(true);
+    setMessage(null);
+    const { error } = await supabase.from("documents").update({ archived_at: null }).eq("id", document.id);
+    setBusy(false);
+
+    if (error) {
+      setMessage({ type: "error", text: "No fue posible restaurar el documento." });
+      return;
+    }
+
+    setArchivedDocuments((current) => current.filter((item) => item.id !== document.id));
+    setDocuments((current) => [{ ...document, archived_at: null }, ...current]);
+    setMessage({ type: "success", text: "Documento restaurado y disponible nuevamente." });
   }
 
   function exportReportToExcel() {
@@ -483,6 +504,7 @@ export default function HomePage() {
     escanear: ["OPERACIÓN RÁPIDA", "Escanear documentos"],
     consulta: ["CONSULTA", "Buscar documentos"],
     reportes: ["ANÁLISIS", "Reportes"],
+    archivados: ["CONTROL", "Documentos archivados"],
   };
 
   return (
@@ -492,7 +514,7 @@ export default function HomePage() {
         <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
       </div>
       <nav className="main-menu" aria-label="Menú principal">
-        {[["panel", "Panel"], ["alta", "Nuevo expediente"], ["escanear", "Escanear documentos"], ["consulta", "Buscar documentos"], ["reportes", "Reportes"]].map(([view, label]) => (
+        {[["panel", "Panel"], ["alta", "Nuevo expediente"], ["escanear", "Escanear documentos"], ["consulta", "Buscar documentos"], ["reportes", "Reportes"], ["archivados", "Archivados"]].map(([view, label]) => (
           <button className={activeView === view ? "active" : ""} key={view} onClick={() => setActiveView(view)}>{label}</button>
         ))}
       </nav>
@@ -600,6 +622,12 @@ export default function HomePage() {
           {filteredReportMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents?.document_types?.name}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
           {filteredReportMovements.length === 0 && <tr><td colSpan="6">No hay movimientos que coincidan con estos filtros.</td></tr>}
         </tbody></table></div>
+      </section>}
+      {activeView === "archivados" && <section className="archived-section">
+        <div className="archived-heading"><div><p className="eyebrow">DOCUMENTOS OCULTOS</p><h2>Archivados</h2><p>Estos documentos no aparecen en la operación diaria, pero conservan todo su historial.</p></div><strong>{archivedDocuments.length} archivados</strong></div>
+        {archivedDocuments.length === 0 ? <p className="empty-state">No hay documentos archivados.</p> : <div className="documents-list">
+          {archivedDocuments.map((document) => <article className="document-row archived-row" key={document.id}><div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span><span>Archivado: {new Date(document.archived_at).toLocaleString("es-MX")}</span></div><div className="row-actions"><button onClick={() => restoreDocument(document)} disabled={busy}>Restaurar</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button></div></article>)}
+        </div>}
       </section>}
       {casePreview && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`Expediente ${casePreview}`}>
