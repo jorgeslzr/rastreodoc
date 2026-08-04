@@ -10,6 +10,7 @@ const DEFAULT_DOCUMENT_TYPES = [
 ];
 
 function formatStatus(status) {
+  if (status === "EN_OFICINA") return "LISTO PARA ENVIAR";
   if (status === "REENVIADO") return "REINGRESADO";
   return status.replaceAll("_", " ");
 }
@@ -32,6 +33,8 @@ export default function HomePage() {
   const [scannedDocument, setScannedDocument] = useState(null);
   const [rejectionReason, setRejectionReason] = useState("");
   const [movementNotes, setMovementNotes] = useState("");
+  const [receiptNumber, setReceiptNumber] = useState("");
+  const [manualMovementReady, setManualMovementReady] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [historyPreview, setHistoryPreview] = useState(null);
@@ -66,8 +69,8 @@ export default function HomePage() {
       supabase.from("case_files").select("id, number").order("created_at", { ascending: false }),
       supabase.from("document_types").select("id, name").order("name"),
       supabase.from("agencies").select("id, name").order("name"),
-      supabase.from("documents").select("id, qr_token, status, case_files(number), document_types(name), agencies(name)").order("created_at", { ascending: false }),
-      supabase.from("movements").select("id, status, occurred_at, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false }),
+      supabase.from("documents").select("id, qr_token, status, last_movement_at, case_files(number), document_types(name), agencies(name)").order("created_at", { ascending: false }),
+      supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false }),
     ]).then(([caseResult, typeResult, agencyResult, documentResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
@@ -163,7 +166,7 @@ export default function HomePage() {
       document_type_id: typeRecord.id,
       agency_id: agencyRecord.id,
       status: "EN_OFICINA",
-    }).select("id, qr_token, status, case_files(number), document_types(name), agencies(name)").single();
+    }).select("id, qr_token, status, last_movement_at, case_files(number), document_types(name), agencies(name)").single();
     setBusy(false);
 
     if (error) {
@@ -176,8 +179,8 @@ export default function HomePage() {
     setDocuments((current) => [data, ...current]);
     setDocumentType("");
     setAgency("");
-    setMessage({ type: "success", text: "Documento agregado con estatus EN OFICINA." });
-    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
+    setMessage({ type: "success", text: "Documento agregado con estatus LISTO PARA ENVIAR." });
+    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -218,6 +221,7 @@ export default function HomePage() {
     }
 
     setScannedDocument(data);
+    setManualMovementReady(false);
     setScanToken("");
     if (scanMode) {
       await registerMovement(scanMode, data);
@@ -229,6 +233,12 @@ export default function HomePage() {
     if (!targetDocument) return;
     setBusy(true);
     setMessage(null);
+
+    if (status === "ENVIADO" && !receiptNumber.trim()) {
+      setBusy(false);
+      setMessage({ type: "error", text: "Escribe el número de boleta antes de registrar el envío." });
+      return;
+    }
 
     let resolvedStatus = status;
     if (status === "ENVIADO") {
@@ -253,6 +263,7 @@ export default function HomePage() {
       status: resolvedStatus,
       rejection_reason: resolvedStatus === "RECHAZADO" ? rejectionReason.trim() || null : null,
       notes: movementNotes.trim() || null,
+      receipt_number: ["ENVIADO", "REENVIADO"].includes(resolvedStatus) ? receiptNumber.trim() : null,
       created_by: session.user.id,
     });
     setBusy(false);
@@ -269,8 +280,10 @@ export default function HomePage() {
       setRejectionReason("");
       setMovementNotes("");
     }
+    if (["ENVIADO", "REENVIADO"].includes(resolvedStatus)) setReceiptNumber("");
     setMessage({ type: "success", text: `Movimiento registrado: ${formatStatus(resolvedStatus)}.` });
-    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
+    setManualMovementReady(false);
+    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -278,7 +291,7 @@ export default function HomePage() {
     setBusy(true);
     const { data, error } = await supabase
       .from("movements")
-      .select("id, status, occurred_at, rejection_reason, notes")
+      .select("id, status, occurred_at, receipt_number, rejection_reason, notes")
       .eq("document_id", document.id)
       .order("occurred_at", { ascending: false });
     setBusy(false);
@@ -289,6 +302,16 @@ export default function HomePage() {
     }
 
     setHistoryPreview({ document, movements: data });
+  }
+
+  function prepareSend(document) {
+    setScannedDocument(document);
+    setScanMode("ENVIADO");
+    setReceiptNumber("");
+    setMovementNotes("");
+    setManualMovementReady(true);
+    setActiveView("escanear");
+    setMessage(null);
   }
 
   if (loadingSession) {
@@ -325,7 +348,7 @@ export default function HomePage() {
     return matchesText && (!statusFilter || document.status === statusFilter);
   });
   const statusCards = [
-    ["EN_OFICINA", "En oficina"], ["ENVIADO", "Enviados"],
+    ["EN_OFICINA", "Listos para enviar"], ["ENVIADO", "Enviados"],
     ["RECHAZADO", "Rechazados"], ["AUTORIZADO", "Autorizados"],
     ["REENVIADO", "Reingresados"],
   ];
@@ -391,11 +414,12 @@ export default function HomePage() {
         <div className="scanner-heading"><div><p className="eyebrow">OPERACIÓN RÁPIDA</p><h2>Escanear varios documentos</h2></div><span>Selecciona una operación una sola vez y escanea todos los documentos</span></div>
         <div className="scan-modes" aria-label="Operación automática al escanear">
           {[["ENVIADO", "ENVIADO"], ["AUTORIZADO", "AUTORIZADO"], ["RECHAZADO", "RECHAZADO"]].map(([status, label]) => (
-            <button className={scanMode === status ? "active" : ""} key={status} onClick={() => { setScanMode(scanMode === status ? "" : status); scanInputRef.current?.focus(); }}>{label}</button>
+            <button className={scanMode === status ? "active" : ""} key={status} onClick={() => { setScanMode(scanMode === status ? "" : status); setManualMovementReady(false); scanInputRef.current?.focus(); }}>{label}</button>
           ))}
         </div>
         <p className="scan-mode-help">{scanMode ? `Modo activo: ${formatStatus(scanMode)}. Cada lectura se guardará automáticamente.` : "Sin modo automático: escanea un documento y después elige la acción."}</p>
         <p className="scan-mode-help">Si eliges ENVIADO y el documento ya tuvo un envío anterior, RASTREADOC lo registrará automáticamente como REINGRESADO.</p>
+        {scanMode === "ENVIADO" && <div className="quick-rejection"><label>Número de boleta<input value={receiptNumber} onChange={(event) => setReceiptNumber(event.target.value)} placeholder="Captura la boleta de este documento" maxLength="100" required /></label><label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
         {scanMode === "RECHAZADO" && <div className="quick-rejection"><label>Motivo para estos rechazos (opcional)<input value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label><label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
         <form className="scan-form" onSubmit={scanDocument}>
           <input ref={scanInputRef} value={scanToken} onChange={(event) => setScanToken(event.target.value)} placeholder="Escanea el QR aquí" aria-label="Código QR" />
@@ -411,6 +435,7 @@ export default function HomePage() {
               <div><span>Último movimiento</span><strong>{new Date(scannedDocument.last_movement_at).toLocaleString("es-MX")}</strong></div>
             </div>
             {!scanMode && <div className="movement-fields">
+              <label>Número de boleta (solo para enviar)<input value={receiptNumber} onChange={(event) => setReceiptNumber(event.target.value)} maxLength="100" /></label>
               <label>Motivo del rechazo (opcional)<input value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label>
               <label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label>
             </div>}
@@ -420,6 +445,7 @@ export default function HomePage() {
               <button onClick={() => registerMovement("AUTORIZADO")} disabled={busy}>Autorizar</button>
               <button className="danger-button" onClick={() => registerMovement("RECHAZADO")} disabled={busy}>Rechazar</button>
             </div>}
+            {scanMode && manualMovementReady && <button className="quick-register" onClick={() => registerMovement(scanMode)} disabled={busy}>Registrar {formatStatus(scanMode)}</button>}
           </div>
         )}
       </section>}
@@ -437,7 +463,7 @@ export default function HomePage() {
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
                 <div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span></div>
-                <div className="row-actions"><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button></div>
+                <div className="row-actions"><button onClick={() => prepareSend(document)}>Registrar envío</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button></div>
               </article>
             ))}
           </div>
@@ -451,9 +477,9 @@ export default function HomePage() {
           <label>Estatus<select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}><option value="">Todos</option>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
           <label>Tipo de documento<select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">Todos</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
         </div>
-        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Fecha</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Movimiento</th></tr></thead><tbody>
-          {filteredReportMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents?.document_types?.name}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.status)}</strong></td></tr>)}
-          {filteredReportMovements.length === 0 && <tr><td colSpan="5">No hay movimientos que coincidan con estos filtros.</td></tr>}
+        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Fecha</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Movimiento</th><th>Boleta</th></tr></thead><tbody>
+          {filteredReportMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents?.document_types?.name}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
+          {filteredReportMovements.length === 0 && <tr><td colSpan="6">No hay movimientos que coincidan con estos filtros.</td></tr>}
         </tbody></table></div>
       </section>}
       {qrPreview && (
@@ -477,7 +503,7 @@ export default function HomePage() {
             <p className="history-document-name">{historyPreview.document.document_types.name} · {historyPreview.document.agencies.name}</p>
             <ol className="timeline">
               {historyPreview.movements.map((movement) => (
-                <li key={movement.id}><span>{new Date(movement.occurred_at).toLocaleString("es-MX")}</span><strong>{formatStatus(movement.status)}</strong>{movement.rejection_reason && <p><b>Motivo:</b> {movement.rejection_reason}</p>}{movement.notes && <p><b>Observaciones:</b> {movement.notes}</p>}</li>
+                <li key={movement.id}><span>{new Date(movement.occurred_at).toLocaleString("es-MX")}</span><strong>{formatStatus(movement.status)}</strong>{movement.receipt_number && <p><b>Boleta:</b> {movement.receipt_number}</p>}{movement.rejection_reason && <p><b>Motivo:</b> {movement.rejection_reason}</p>}{movement.notes && <p><b>Observaciones:</b> {movement.notes}</p>}</li>
               ))}
             </ol>
           </section>

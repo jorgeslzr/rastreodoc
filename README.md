@@ -51,7 +51,7 @@ marca de impresora.
 
 ## Reglas de datos acordadas
 
-Los estatus iniciales son `EN OFICINA`, `ENVIADO`, `AUTORIZADO`, `RECHAZADO` y
+Los estatus visibles son `LISTO PARA ENVIAR`, `ENVIADO`, `AUTORIZADO`, `RECHAZADO` y
 `REINGRESADO`. No se agregará otro estatus sin autorización.
 
 El estatus actual se conservará en el documento para consultas rápidas y cada

@@ -68,6 +68,7 @@ button:disabled { opacity:.65; cursor:wait; }
 .status-pill { color:var(--success)!important; }
 .movement-fields { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 .movement-actions { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.quick-register { width:100%; margin-top:18px; }
 .danger-button { background:var(--danger); }
 .danger-button:hover { background:#812323; }
 .documents-section { margin-top:48px; }

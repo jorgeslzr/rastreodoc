@@ -57,10 +57,14 @@ create table if not exists public.movements (
   status public.document_status not null,
   occurred_at timestamptz not null default now(),
   rejection_reason text,
+  receipt_number text,
   notes text,
   created_by uuid references auth.users(id) on delete set null,
   constraint rejection_reason_length check (
     rejection_reason is null or length(rejection_reason) <= 250
+  ),
+  constraint receipt_number_length check (
+    receipt_number is null or length(receipt_number) <= 100
   )
 );
 
