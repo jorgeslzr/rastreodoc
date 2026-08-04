@@ -55,6 +55,7 @@ export default function HomePage() {
   const [reportStart, setReportStart] = useState("");
   const [reportEnd, setReportEnd] = useState("");
   const [reportCase, setReportCase] = useState("");
+  const [casePreview, setCasePreview] = useState(null);
   const scanInputRef = useRef(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -454,6 +455,10 @@ export default function HomePage() {
       && (!reportType || movement.documents?.document_types?.name === reportType)
       && (!reportCase.trim() || caseNumber.toLocaleLowerCase("es-MX").includes(reportCase.trim().toLocaleLowerCase("es-MX")));
   });
+  const casePreviewDocuments = casePreview
+    ? documents.filter((document) => document.case_files.number === casePreview)
+    : [];
+  const latestReceiptFor = (documentId) => reportMovements.find((movement) => movement.documents?.id === documentId && movement.receipt_number)?.receipt_number;
   const viewTitles = {
     panel: ["RESUMEN", "Panel principal"],
     alta: ["CAPTURA", "Nuevo expediente"],
@@ -555,7 +560,7 @@ export default function HomePage() {
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
                 <div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span></div>
-                <div className="row-actions"><button onClick={() => prepareSend(document)}>Registrar envío</button><button className="secondary" onClick={() => prepareCorrection(document)}>Editar estatus</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button><button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button></div>
+                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button><button onClick={() => prepareSend(document)}>Registrar envío</button><button className="secondary" onClick={() => prepareCorrection(document)}>Editar estatus</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button><button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button></div>
               </article>
             ))}
           </div>
@@ -577,6 +582,25 @@ export default function HomePage() {
           {filteredReportMovements.length === 0 && <tr><td colSpan="6">No hay movimientos que coincidan con estos filtros.</td></tr>}
         </tbody></table></div>
       </section>}
+      {casePreview && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`Expediente ${casePreview}`}>
+          <section className="case-modal">
+            <button className="modal-close" onClick={() => setCasePreview(null)} aria-label="Cerrar">×</button>
+            <p className="eyebrow">EXPEDIENTE</p>
+            <h2>{casePreview}</h2>
+            <p>{casePreviewDocuments.length} documentos relacionados</p>
+            <div className="case-documents">
+              {casePreviewDocuments.map((document) => (
+                <article key={document.id} className="case-document-card">
+                  <div><strong>{document.document_types.name}</strong><span>{document.agencies.name}</span></div>
+                  <div className="case-document-status"><b>{formatStatus(document.status)}</b>{latestReceiptFor(document.id) && <span>Boleta: {latestReceiptFor(document.id)}</span>}</div>
+                  <div className="case-document-actions"><button onClick={() => { setCasePreview(null); prepareSend(document); }}>Registrar envío</button><button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}>Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>Ver QR</button></div>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
       {qrPreview && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Código QR del documento">
           <section className="qr-modal">
