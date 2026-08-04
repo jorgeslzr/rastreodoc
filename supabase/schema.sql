@@ -44,6 +44,7 @@ create table if not exists public.documents (
   status public.document_status not null default 'EN_OFICINA',
   qr_token uuid not null unique default gen_random_uuid(),
   last_movement_at timestamptz not null default now(),
+  archived_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -158,6 +159,7 @@ revoke all on public.agencies, public.document_types, public.case_files,
   public.documents, public.movements from anon;
 
 grant select, insert on public.agencies, public.document_types,
-  public.case_files, public.documents to authenticated;
+  public.case_files to authenticated;
+grant select, insert, update on public.documents to authenticated;
 grant select, insert on public.movements to authenticated;
 grant usage, select on sequence public.movements_id_seq to authenticated;

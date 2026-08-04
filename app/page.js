@@ -35,6 +35,9 @@ export default function HomePage() {
   const [movementNotes, setMovementNotes] = useState("");
   const [receiptNumber, setReceiptNumber] = useState("");
   const [manualMovementReady, setManualMovementReady] = useState(false);
+  const [editPreview, setEditPreview] = useState(null);
+  const [correctedStatus, setCorrectedStatus] = useState("");
+  const [correctionNote, setCorrectionNote] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [historyPreview, setHistoryPreview] = useState(null);
@@ -69,7 +72,7 @@ export default function HomePage() {
       supabase.from("case_files").select("id, number").order("created_at", { ascending: false }),
       supabase.from("document_types").select("id, name").order("name"),
       supabase.from("agencies").select("id, name").order("name"),
-      supabase.from("documents").select("id, qr_token, status, last_movement_at, case_files(number), document_types(name), agencies(name)").order("created_at", { ascending: false }),
+      supabase.from("documents").select("id, qr_token, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }),
       supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false }),
     ]).then(([caseResult, typeResult, agencyResult, documentResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
@@ -166,7 +169,7 @@ export default function HomePage() {
       document_type_id: typeRecord.id,
       agency_id: agencyRecord.id,
       status: "EN_OFICINA",
-    }).select("id, qr_token, status, last_movement_at, case_files(number), document_types(name), agencies(name)").single();
+    }).select("id, qr_token, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").single();
     setBusy(false);
 
     if (error) {
@@ -312,6 +315,59 @@ export default function HomePage() {
     setManualMovementReady(true);
     setActiveView("escanear");
     setMessage(null);
+  }
+
+  function prepareCorrection(document) {
+    setEditPreview(document);
+    setCorrectedStatus(document.status);
+    setCorrectionNote("");
+  }
+
+  async function saveStatusCorrection(event) {
+    event.preventDefault();
+    if (!editPreview || !correctedStatus) return;
+    setBusy(true);
+    setMessage(null);
+
+    const note = correctionNote.trim()
+      ? `CORRECCIÓN DE CAPTURA: ${correctionNote.trim()}`
+      : "CORRECCIÓN DE CAPTURA";
+    const { error } = await supabase.from("movements").insert({
+      document_id: editPreview.id,
+      status: correctedStatus,
+      notes: note,
+      created_by: session.user.id,
+    });
+    setBusy(false);
+
+    if (error) {
+      setMessage({ type: "error", text: "No fue posible corregir el estatus." });
+      return;
+    }
+
+    setDocuments((current) => current.map((document) => document.id === editPreview.id ? { ...document, status: correctedStatus } : document));
+    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
+    setReportMovements(refreshedMovements ?? []);
+    setEditPreview(null);
+    setMessage({ type: "success", text: `Estatus corregido a ${formatStatus(correctedStatus)}. El movimiento anterior se conservó en el historial.` });
+  }
+
+  async function archiveDocument(document) {
+    const confirmed = window.confirm(`¿Archivar el documento ${document.document_types.name} del expediente ${document.case_files.number}?`);
+    if (!confirmed) return;
+    setBusy(true);
+    setMessage(null);
+    const { error } = await supabase.from("documents").update({ archived_at: new Date().toISOString() }).eq("id", document.id);
+    setBusy(false);
+
+    if (error) {
+      setMessage({ type: "error", text: "No fue posible archivar el documento." });
+      return;
+    }
+
+    setDocuments((current) => current.filter((item) => item.id !== document.id));
+    if (scannedDocument?.id === document.id) setScannedDocument(null);
+    setMessage({ type: "success", text: "Documento archivado. Su historial se conservó." });
   }
 
   if (loadingSession) {
@@ -463,7 +519,7 @@ export default function HomePage() {
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
                 <div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span></div>
-                <div className="row-actions"><button onClick={() => prepareSend(document)}>Registrar envío</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button></div>
+                <div className="row-actions"><button onClick={() => prepareSend(document)}>Registrar envío</button><button className="secondary" onClick={() => prepareCorrection(document)}>Editar estatus</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button><button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button></div>
               </article>
             ))}
           </div>
@@ -507,6 +563,20 @@ export default function HomePage() {
               ))}
             </ol>
           </section>
+        </div>
+      )}
+      {editPreview && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Corregir estatus del documento">
+          <form className="edit-modal" onSubmit={saveStatusCorrection}>
+            <button type="button" className="modal-close" onClick={() => setEditPreview(null)} aria-label="Cerrar">×</button>
+            <p className="eyebrow">CORRECCIÓN</p>
+            <h2>Editar estatus</h2>
+            <p>{editPreview.case_files.number} · {editPreview.document_types.name}</p>
+            <label>Estatus correcto<select value={correctedStatus} onChange={(event) => setCorrectedStatus(event.target.value)}>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
+            <label>Motivo de la corrección (opcional)<input value={correctionNote} onChange={(event) => setCorrectionNote(event.target.value)} placeholder="Ejemplo: Se seleccionó rechazado por error" /></label>
+            <div className="edit-actions"><button type="button" className="secondary" onClick={() => setEditPreview(null)}>Cancelar</button><button type="submit" disabled={busy}>Guardar corrección</button></div>
+            <small>El movimiento anterior permanecerá en el historial para proteger la información.</small>
+          </form>
         </div>
       )}
     </main>
