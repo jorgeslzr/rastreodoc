@@ -5,8 +5,11 @@ import { createClient } from "@/lib/supabase/client";
 
 const supabase = createClient();
 const DEFAULT_DOCUMENT_TYPES = [
-  "PREPRE", "CERTIFICADO", "AVISO PREVENTIVO", "ESCRITURA", "ACTA",
+  "CERTIFICADO", "AVISO PREVENTIVO", "ESCRITURA", "ACTA", "ISAI",
   "INFORME TEST. REGISTRO", "INFORME TEST. ARCHIVO", "OTROS",
+];
+const DEFAULT_AGENCIES = [
+  "REGISTRO PÚBLICO", "TESORERÍA MUNICIPAL", "ARCHIVO GENERAL DE NOTARÍAS",
 ];
 
 function formatStatus(status) {
@@ -26,7 +29,6 @@ export default function HomePage() {
   const [documentType, setDocumentType] = useState("");
   const [agency, setAgency] = useState("");
   const [documentTypes, setDocumentTypes] = useState([]);
-  const [agencies, setAgencies] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [qrPreview, setQrPreview] = useState(null);
   const [scanToken, setScanToken] = useState("");
@@ -72,13 +74,11 @@ export default function HomePage() {
     Promise.all([
       supabase.from("case_files").select("id, number").order("created_at", { ascending: false }),
       supabase.from("document_types").select("id, name").order("name"),
-      supabase.from("agencies").select("id, name").order("name"),
       supabase.from("documents").select("id, qr_token, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }),
       supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false }),
-    ]).then(([caseResult, typeResult, agencyResult, documentResult, movementResult]) => {
+    ]).then(([caseResult, typeResult, documentResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
-      setAgencies(agencyResult.data ?? []);
       setDocuments(documentResult.data ?? []);
       setReportMovements(movementResult.data ?? []);
     });
@@ -179,7 +179,6 @@ export default function HomePage() {
     }
 
     setDocumentTypes((current) => current.some(({ id }) => id === typeRecord.id) ? current : [...current, typeRecord]);
-    setAgencies((current) => current.some(({ id }) => id === agencyRecord.id) ? current : [...current, agencyRecord]);
     setDocuments((current) => [data, ...current]);
     setDocumentType("");
     setAgency("");
@@ -409,7 +408,7 @@ export default function HomePage() {
     ["RECHAZADO", "Rechazados"], ["AUTORIZADO", "Autorizados"],
     ["REENVIADO", "Reingresados"],
   ];
-  const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name)])].sort((a, b) => a.localeCompare(b, "es"));
+  const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const filteredReportMovements = reportMovements.filter((movement) => {
     const movementDate = movement.occurred_at.slice(0, 10);
     const caseNumber = movement.documents?.case_files?.number ?? "";
@@ -458,13 +457,11 @@ export default function HomePage() {
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Guardar expediente"}</button>
       </form>
       <form className="panel case-panel" onSubmit={createDocument}>
-        <div><h2>Agregar documento</h2><p>Elige el expediente y captura los datos del documento.</p></div>
+        <div><h2>Agregar documento</h2><p>Elige el expediente y captura los datos. Puedes agregar varias veces el mismo tipo de documento.</p></div>
         <label>Buscar expediente<input list="case-files" value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Escribe parte del número" required /></label>
         <datalist id="case-files">{caseFiles.map((caseFile) => <option key={caseFile.id} value={caseFile.number} />)}</datalist>
-        <label>Tipo de documento<input list="document-types" value={documentType} onChange={(event) => setDocumentType(event.target.value)} placeholder="Ejemplo: Aviso preventivo" required /></label>
-        <datalist id="document-types">{availableDocumentTypes.map((name) => <option key={name} value={name} />)}</datalist>
-        <label>Dependencia<input list="agencies" value={agency} onChange={(event) => setAgency(event.target.value)} placeholder="Ejemplo: Registro Público" required /></label>
-        <datalist id="agencies">{agencies.map((item) => <option key={item.id} value={item.name} />)}</datalist>
+        <label>Tipo de documento<select value={documentType} onChange={(event) => setDocumentType(event.target.value)} required><option value="">Seleccionar tipo</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+        <label>Dependencia<select value={agency} onChange={(event) => setAgency(event.target.value)} required><option value="">Seleccionar dependencia</option>{DEFAULT_AGENCIES.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</button>
       </form>
       </div>}
