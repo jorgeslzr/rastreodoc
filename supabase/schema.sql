@@ -11,7 +11,6 @@ begin
     'ENVIADO',
     'AUTORIZADO',
     'RECHAZADO',
-    'EN_CORRECCION',
     'REENVIADO'
   );
 exception

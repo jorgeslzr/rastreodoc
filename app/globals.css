@@ -45,6 +45,12 @@ button:disabled { opacity:.65; cursor:wait; }
 .scanner-heading h2 { margin:0; font-size:26px; }
 .scanner-heading > span { color:#bfd0dc; font-size:13px; }
 .scanner-section .eyebrow { color:var(--gold); }
+.scan-modes { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:22px; }
+.scan-modes button { border:1px solid #6d8495; background:#29465d; }
+.scan-modes button:hover,.scan-modes button.active { border-color:var(--gold); background:var(--gold); color:var(--navy); }
+.scan-mode-help { margin:12px 0 0; color:#d8e3e9; font-size:13px; }
+.quick-rejection { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:8px; }
+.quick-rejection label { color:white; }
 .scan-form { display:grid; grid-template-columns:1fr auto; gap:10px; margin-top:20px; }
 .scan-form input { min-height:56px; font-size:18px; }
 .scan-result { margin-top:20px; padding:22px; border-radius:12px; background:white; color:var(--ink); }
@@ -87,4 +93,4 @@ button:disabled { opacity:.65; cursor:wait; }
 @media (max-width:900px) { .document-summary { grid-template-columns:repeat(2,1fr); } }
 @media (max-width:1000px) { .dashboard-cards { grid-template-columns:repeat(3,1fr); } }
 @media (max-width:800px) { .workspace-grid { grid-template-columns:1fr; } }
-@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .login-copy .intro { margin-bottom:0; } .panel { padding:23px; } .page-heading,.scanner-heading { align-items:flex-start; } .page-heading h1 { font-size:34px; } .scan-form,.movement-fields,.movement-actions,.document-filters { grid-template-columns:1fr; } .document-row { align-items:flex-start; flex-direction:column; } .row-actions,.document-row button { width:100%; } .dashboard-cards { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .login-copy .intro { margin-bottom:0; } .panel { padding:23px; } .page-heading,.scanner-heading { align-items:flex-start; } .page-heading h1 { font-size:34px; } .scan-form,.scan-modes,.quick-rejection,.movement-fields,.movement-actions,.document-filters { grid-template-columns:1fr; } .document-row { align-items:flex-start; flex-direction:column; } .row-actions,.document-row button { width:100%; } .dashboard-cards { grid-template-columns:repeat(2,1fr); } }

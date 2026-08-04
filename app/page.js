@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 const supabase = createClient();
+
+function formatStatus(status) {
+  if (status === "REENVIADO") return "REINGRESADO";
+  return status.replaceAll("_", " ");
+}
 
 export default function HomePage() {
   const [session, setSession] = useState(null);
@@ -26,6 +31,8 @@ export default function HomePage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [historyPreview, setHistoryPreview] = useState(null);
+  const [scanMode, setScanMode] = useState("");
+  const scanInputRef = useRef(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -138,6 +145,7 @@ export default function HomePage() {
       case_file_id: selectedCaseId,
       document_type_id: typeRecord.id,
       agency_id: agencyRecord.id,
+      status: "EN_OFICINA",
     }).select("id, qr_token, status, case_files(number), document_types(name), agencies(name)").single();
     setBusy(false);
 
@@ -192,19 +200,39 @@ export default function HomePage() {
 
     setScannedDocument(data);
     setScanToken("");
-    setRejectionReason("");
-    setMovementNotes("");
+    if (scanMode) {
+      await registerMovement(scanMode, data);
+    }
+    scanInputRef.current?.focus();
   }
 
-  async function registerMovement(status) {
-    if (!scannedDocument) return;
+  async function registerMovement(status, targetDocument = scannedDocument) {
+    if (!targetDocument) return;
     setBusy(true);
     setMessage(null);
 
+    let resolvedStatus = status;
+    if (status === "ENVIADO") {
+      const { data: previousSends, error: historyError } = await supabase
+        .from("movements")
+        .select("id")
+        .eq("document_id", targetDocument.id)
+        .in("status", ["ENVIADO", "REENVIADO"])
+        .limit(1);
+
+      if (historyError) {
+        setBusy(false);
+        setMessage({ type: "error", text: "No fue posible comprobar los envíos anteriores." });
+        return;
+      }
+
+      if (previousSends.length > 0) resolvedStatus = "REENVIADO";
+    }
+
     const { error } = await supabase.from("movements").insert({
-      document_id: scannedDocument.id,
-      status,
-      rejection_reason: status === "RECHAZADO" ? rejectionReason.trim() || null : null,
+      document_id: targetDocument.id,
+      status: resolvedStatus,
+      rejection_reason: resolvedStatus === "RECHAZADO" ? rejectionReason.trim() || null : null,
       notes: movementNotes.trim() || null,
       created_by: session.user.id,
     });
@@ -215,12 +243,14 @@ export default function HomePage() {
       return;
     }
 
-    const updated = { ...scannedDocument, status, last_movement_at: new Date().toISOString() };
+    const updated = { ...targetDocument, status: resolvedStatus, last_movement_at: new Date().toISOString() };
     setScannedDocument(updated);
     setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status } : document));
-    setRejectionReason("");
-    setMovementNotes("");
-    setMessage({ type: "success", text: `Movimiento registrado: ${status.replaceAll("_", " ")}.` });
+    if (!scanMode) {
+      setRejectionReason("");
+      setMovementNotes("");
+    }
+    setMessage({ type: "success", text: `Movimiento registrado: ${formatStatus(resolvedStatus)}.` });
   }
 
   async function showHistory(document) {
@@ -275,8 +305,8 @@ export default function HomePage() {
   });
   const statusCards = [
     ["EN_OFICINA", "En oficina"], ["ENVIADO", "Enviados"],
-    ["RECHAZADO", "Rechazados"], ["EN_CORRECCION", "En corrección"],
-    ["AUTORIZADO", "Autorizados"], ["REENVIADO", "Reenviados"],
+    ["RECHAZADO", "Rechazados"], ["AUTORIZADO", "Autorizados"],
+    ["REENVIADO", "Reingresados"],
   ];
 
   return (
@@ -318,10 +348,18 @@ export default function HomePage() {
       </div>
       {message && <div className={`notice page-notice ${message.type}`}>{message.text}</div>}
       <section className="scanner-section">
-        <div className="scanner-heading"><div><p className="eyebrow">OPERACIÓN RÁPIDA</p><h2>Escanear documento</h2></div><span>El lector funciona como teclado</span></div>
+        <div className="scanner-heading"><div><p className="eyebrow">OPERACIÓN RÁPIDA</p><h2>Escanear varios documentos</h2></div><span>Selecciona una operación una sola vez y escanea todos los documentos</span></div>
+        <div className="scan-modes" aria-label="Operación automática al escanear">
+          {[["ENVIADO", "ENVIADO"], ["AUTORIZADO", "AUTORIZADO"], ["RECHAZADO", "RECHAZADO"]].map(([status, label]) => (
+            <button className={scanMode === status ? "active" : ""} key={status} onClick={() => { setScanMode(scanMode === status ? "" : status); scanInputRef.current?.focus(); }}>{label}</button>
+          ))}
+        </div>
+        <p className="scan-mode-help">{scanMode ? `Modo activo: ${formatStatus(scanMode)}. Cada lectura se guardará automáticamente.` : "Sin modo automático: escanea un documento y después elige la acción."}</p>
+        <p className="scan-mode-help">Si eliges ENVIADO y el documento ya tuvo un envío anterior, RASTREADOC lo registrará automáticamente como REINGRESADO.</p>
+        {scanMode === "RECHAZADO" && <div className="quick-rejection"><label>Motivo para estos rechazos (opcional)<input value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label><label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
         <form className="scan-form" onSubmit={scanDocument}>
-          <input value={scanToken} onChange={(event) => setScanToken(event.target.value)} placeholder="Escanea el QR aquí" aria-label="Código QR" />
-          <button type="submit" disabled={busy}>Buscar documento</button>
+          <input ref={scanInputRef} value={scanToken} onChange={(event) => setScanToken(event.target.value)} placeholder="Escanea el QR aquí" aria-label="Código QR" />
+          <button type="submit" disabled={busy}>{scanMode ? "Registrar lectura" : "Buscar documento"}</button>
         </form>
         {scannedDocument && (
           <div className="scan-result">
@@ -329,21 +367,19 @@ export default function HomePage() {
               <div><span>Expediente</span><strong>{scannedDocument.case_files.number}</strong></div>
               <div><span>Documento</span><strong>{scannedDocument.document_types.name}</strong></div>
               <div><span>Dependencia</span><strong>{scannedDocument.agencies.name}</strong></div>
-              <div><span>Estatus actual</span><strong className="status-pill">{scannedDocument.status.replaceAll("_", " ")}</strong></div>
+              <div><span>Estatus actual</span><strong className="status-pill">{formatStatus(scannedDocument.status)}</strong></div>
               <div><span>Último movimiento</span><strong>{new Date(scannedDocument.last_movement_at).toLocaleString("es-MX")}</strong></div>
             </div>
-            <div className="movement-fields">
+            {!scanMode && <div className="movement-fields">
               <label>Motivo del rechazo (opcional)<input value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label>
               <label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label>
-            </div>
-            <div className="movement-actions">
+            </div>}
+            {!scanMode && <div className="movement-actions">
               <button onClick={() => registerMovement("ENVIADO")} disabled={busy}>Enviar</button>
               <button onClick={() => registerMovement("EN_OFICINA")} disabled={busy}>Recibir en oficina</button>
               <button onClick={() => registerMovement("AUTORIZADO")} disabled={busy}>Autorizar</button>
               <button className="danger-button" onClick={() => registerMovement("RECHAZADO")} disabled={busy}>Rechazar</button>
-              <button onClick={() => registerMovement("EN_CORRECCION")} disabled={busy}>Mandar a corrección</button>
-              <button onClick={() => registerMovement("REENVIADO")} disabled={busy}>Reenviar</button>
-            </div>
+            </div>}
           </div>
         )}
       </section>
@@ -360,7 +396,7 @@ export default function HomePage() {
           <div className="documents-list">
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
-                <div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name} — {document.status.replaceAll("_", " ")}</span></div>
+                <div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span></div>
                 <div className="row-actions"><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button></div>
               </article>
             ))}
@@ -388,7 +424,7 @@ export default function HomePage() {
             <p className="history-document-name">{historyPreview.document.document_types.name} · {historyPreview.document.agencies.name}</p>
             <ol className="timeline">
               {historyPreview.movements.map((movement) => (
-                <li key={movement.id}><span>{new Date(movement.occurred_at).toLocaleString("es-MX")}</span><strong>{movement.status.replaceAll("_", " ")}</strong>{movement.rejection_reason && <p><b>Motivo:</b> {movement.rejection_reason}</p>}{movement.notes && <p><b>Observaciones:</b> {movement.notes}</p>}</li>
+                <li key={movement.id}><span>{new Date(movement.occurred_at).toLocaleString("es-MX")}</span><strong>{formatStatus(movement.status)}</strong>{movement.rejection_reason && <p><b>Motivo:</b> {movement.rejection_reason}</p>}{movement.notes && <p><b>Observaciones:</b> {movement.notes}</p>}</li>
               ))}
             </ol>
           </section>

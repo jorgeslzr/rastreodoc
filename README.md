@@ -51,8 +51,8 @@ marca de impresora.
 
 ## Reglas de datos acordadas
 
-Los estatus iniciales son `EN OFICINA`, `ENVIADO`, `AUTORIZADO`, `RECHAZADO`,
-`EN CORRECCIÓN` y `REENVIADO`. No se agregará otro estatus sin autorización.
+Los estatus iniciales son `EN OFICINA`, `ENVIADO`, `AUTORIZADO`, `RECHAZADO` y
+`REINGRESADO`. No se agregará otro estatus sin autorización.
 
 El estatus actual se conservará en el documento para consultas rápidas y cada
 cambio se registrará también como un movimiento inmutable, con fecha y hora. Un
