@@ -27,6 +27,12 @@ button:disabled { opacity:.65; cursor:wait; }
 .notice.error { background:#fbeaea; color:var(--danger); }
 .notice.success { background:#eaf7f1; color:var(--success); }
 .page-heading { display:flex; align-items:end; justify-content:space-between; gap:24px; margin-bottom:32px; }
+.main-menu { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:28px; padding:7px; border:1px solid var(--line); border-radius:12px; background:white; }
+.main-menu button { min-height:44px; padding:0 12px; background:transparent; color:var(--navy); }
+.main-menu button:hover,.main-menu button.active { background:var(--navy); color:white; }
+.welcome-card { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-bottom:18px; padding:24px; border-radius:14px; background:#e8f1f5; }
+.welcome-card h2 { margin:0; color:var(--navy); }
+.welcome-card p:not(.eyebrow) { margin:7px 0 0; color:var(--muted); }
 .dashboard-cards { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:28px; }
 .dashboard-card { min-height:94px; padding:14px; border:1px solid var(--line); background:white; color:var(--navy); text-align:left; }
 .dashboard-card:hover,.dashboard-card.active { border-color:var(--blue); background:#e9f3f7; }
@@ -41,6 +47,7 @@ button:disabled { opacity:.65; cursor:wait; }
 .case-panel input { min-height:56px; font-size:18px; }
 .page-notice { max-width:660px; margin-top:20px; }
 .scanner-section { margin-top:48px; padding:26px; border-radius:16px; background:var(--navy); color:white; }
+.standalone { margin-top:0; }
 .scanner-heading { display:flex; align-items:end; justify-content:space-between; gap:20px; }
 .scanner-heading h2 { margin:0; font-size:26px; }
 .scanner-heading > span { color:#bfd0dc; font-size:13px; }
@@ -93,4 +100,4 @@ button:disabled { opacity:.65; cursor:wait; }
 @media (max-width:900px) { .document-summary { grid-template-columns:repeat(2,1fr); } }
 @media (max-width:1000px) { .dashboard-cards { grid-template-columns:repeat(3,1fr); } }
 @media (max-width:800px) { .workspace-grid { grid-template-columns:1fr; } }
-@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .login-copy .intro { margin-bottom:0; } .panel { padding:23px; } .page-heading,.scanner-heading { align-items:flex-start; } .page-heading h1 { font-size:34px; } .scan-form,.scan-modes,.quick-rejection,.movement-fields,.movement-actions,.document-filters { grid-template-columns:1fr; } .document-row { align-items:flex-start; flex-direction:column; } .row-actions,.document-row button { width:100%; } .dashboard-cards { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .login-copy .intro { margin-bottom:0; } .panel { padding:23px; } .page-heading,.scanner-heading,.welcome-card { align-items:flex-start; } .page-heading h1 { font-size:34px; } .main-menu { grid-template-columns:repeat(2,1fr); } .scan-form,.scan-modes,.quick-rejection,.movement-fields,.movement-actions,.document-filters { grid-template-columns:1fr; } .document-row,.welcome-card { align-items:flex-start; flex-direction:column; } .row-actions,.document-row button,.welcome-card button { width:100%; } .dashboard-cards { grid-template-columns:repeat(2,1fr); } }

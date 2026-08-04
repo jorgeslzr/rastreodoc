@@ -32,6 +32,7 @@ export default function HomePage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [historyPreview, setHistoryPreview] = useState(null);
   const [scanMode, setScanMode] = useState("");
+  const [activeView, setActiveView] = useState("panel");
   const scanInputRef = useRef(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -308,21 +309,35 @@ export default function HomePage() {
     ["RECHAZADO", "Rechazados"], ["AUTORIZADO", "Autorizados"],
     ["REENVIADO", "Reingresados"],
   ];
+  const viewTitles = {
+    panel: ["RESUMEN", "Panel principal"],
+    alta: ["CAPTURA", "Nuevo expediente"],
+    escanear: ["OPERACIÓN RÁPIDA", "Escanear documentos"],
+    consulta: ["CONSULTA", "Buscar documentos"],
+  };
 
   return (
     <main className="page-shell">
       <div className="page-heading">
-        <div><p className="eyebrow">EXPEDIENTES</p><h1>Alta de expediente</h1></div>
+        <div><p className="eyebrow">{viewTitles[activeView][0]}</p><h1>{viewTitles[activeView][1]}</h1></div>
         <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
       </div>
+      <nav className="main-menu" aria-label="Menú principal">
+        {[["panel", "Panel"], ["alta", "Nuevo expediente"], ["escanear", "Escanear documentos"], ["consulta", "Buscar documentos"]].map(([view, label]) => (
+          <button className={activeView === view ? "active" : ""} key={view} onClick={() => setActiveView(view)}>{label}</button>
+        ))}
+      </nav>
+      {activeView === "panel" && <section className="dashboard-view">
+        <div className="welcome-card"><div><p className="eyebrow">DOCUMENTOS</p><h2>Situación actual de la oficina</h2><p>Presiona una tarjeta para consultar los documentos de ese estatus.</p></div><button onClick={() => setActiveView("escanear")}>Escanear documentos</button></div>
       <section className="dashboard-cards" aria-label="Resumen de documentos">
         {statusCards.map(([status, label]) => (
-          <button className={`dashboard-card ${statusFilter === status ? "active" : ""}`} key={status} onClick={() => setStatusFilter(statusFilter === status ? "" : status)}>
+          <button className={`dashboard-card ${statusFilter === status ? "active" : ""}`} key={status} onClick={() => { setStatusFilter(status); setActiveView("consulta"); }}>
             <strong>{documents.filter((document) => document.status === status).length}</strong><span>{label}</span>
           </button>
         ))}
       </section>
-      <div className="workspace-grid">
+      </section>}
+      {activeView === "alta" && <div className="workspace-grid">
       <form className="panel case-panel" onSubmit={createCaseFile}>
         <div>
           <h2>Nuevo expediente</h2>
@@ -345,9 +360,9 @@ export default function HomePage() {
         <datalist id="agencies">{agencies.map((item) => <option key={item.id} value={item.name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</button>
       </form>
-      </div>
+      </div>}
       {message && <div className={`notice page-notice ${message.type}`}>{message.text}</div>}
-      <section className="scanner-section">
+      {activeView === "escanear" && <section className="scanner-section standalone">
         <div className="scanner-heading"><div><p className="eyebrow">OPERACIÓN RÁPIDA</p><h2>Escanear varios documentos</h2></div><span>Selecciona una operación una sola vez y escanea todos los documentos</span></div>
         <div className="scan-modes" aria-label="Operación automática al escanear">
           {[["ENVIADO", "ENVIADO"], ["AUTORIZADO", "AUTORIZADO"], ["RECHAZADO", "RECHAZADO"]].map(([status, label]) => (
@@ -382,8 +397,8 @@ export default function HomePage() {
             </div>}
           </div>
         )}
-      </section>
-      <section className="documents-section">
+      </section>}
+      {activeView === "consulta" && <section className="documents-section standalone">
         <div><p className="eyebrow">CONSULTA</p><h2>Todos los documentos</h2></div>
         <div className="document-filters">
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar expediente, documento o dependencia" aria-label="Buscar documentos" />
@@ -402,7 +417,7 @@ export default function HomePage() {
             ))}
           </div>
         )}
-      </section>
+      </section>}
       {qrPreview && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Código QR del documento">
           <section className="qr-modal">
