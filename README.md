@@ -1,4 +1,4 @@
-# Ratreodoc
+# RASTREADOC
 
 Sistema privado y sencillo para controlar expedientes, sus documentos y el
 historial completo de movimientos de una notaría.

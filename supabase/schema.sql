@@ -1,4 +1,4 @@
--- Esquema inicial de Ratreodoc para Supabase.
+-- Esquema inicial de RASTREADOC para Supabase.
 -- Ejecutar una sola vez desde SQL Editor en el proyecto correspondiente.
 
 create extension if not exists pgcrypto;
