@@ -78,6 +78,7 @@ button:disabled { opacity:.65; cursor:wait; }
 .document-row { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:18px 20px; border:1px solid var(--line); border-radius:12px; background:white; }
 .document-row strong,.document-row span { display:block; }
 .document-row span { margin-top:5px; color:var(--muted); font-size:14px; }
+.document-row .time-outside,.case-document-status .time-outside { color:#9a5b00; font-weight:700; }
 .row-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
 .archive-button { border:1px solid #d8b6b6; background:white; color:var(--danger); }
 .archive-button:hover { background:#fbeaea; }

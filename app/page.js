@@ -22,6 +22,18 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
 }
 
+function formatTimeOutside(date, currentTime) {
+  const totalHours = Math.max(0, Math.floor((currentTime - new Date(date).getTime()) / 3600000));
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  if (days === 0) return `${hours} ${hours === 1 ? "hora" : "horas"}`;
+  return `${days} ${days === 1 ? "día" : "días"}, ${hours} ${hours === 1 ? "hora" : "horas"}`;
+}
+
+function isOutsideOffice(status) {
+  return ["ENVIADO", "REENVIADO"].includes(status);
+}
+
 export default function HomePage() {
   const [session, setSession] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -56,6 +68,7 @@ export default function HomePage() {
   const [reportEnd, setReportEnd] = useState("");
   const [reportCase, setReportCase] = useState("");
   const [casePreview, setCasePreview] = useState(null);
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
   const scanInputRef = useRef(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -71,6 +84,11 @@ export default function HomePage() {
     });
 
     return () => data.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 60000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -530,6 +548,7 @@ export default function HomePage() {
               <div><span>Dependencia</span><strong>{scannedDocument.agencies.name}</strong></div>
               <div><span>Estatus actual</span><strong className="status-pill">{formatStatus(scannedDocument.status)}</strong></div>
               <div><span>Último movimiento</span><strong>{new Date(scannedDocument.last_movement_at).toLocaleString("es-MX")}</strong></div>
+              {isOutsideOffice(scannedDocument.status) && <div><span>Tiempo fuera</span><strong>{formatTimeOutside(scannedDocument.last_movement_at, currentTime)}</strong></div>}
             </div>
             {!scanMode && <div className="movement-fields">
               <label>Número de boleta (solo para enviar)<input value={receiptNumber} onChange={(event) => setReceiptNumber(event.target.value)} maxLength="100" /></label>
@@ -559,7 +578,7 @@ export default function HomePage() {
           <div className="documents-list">
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
-                <div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span></div>
+                <div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{isOutsideOffice(document.status) && <span className="time-outside">Fuera de la oficina: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div>
                 <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button><button onClick={() => prepareSend(document)}>Registrar envío</button><button className="secondary" onClick={() => prepareCorrection(document)}>Editar estatus</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button><button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button></div>
               </article>
             ))}
@@ -593,7 +612,7 @@ export default function HomePage() {
               {casePreviewDocuments.map((document) => (
                 <article key={document.id} className="case-document-card">
                   <div><strong>{document.document_types.name}</strong><span>{document.agencies.name}</span></div>
-                  <div className="case-document-status"><b>{formatStatus(document.status)}</b>{latestReceiptFor(document.id) && <span>Boleta: {latestReceiptFor(document.id)}</span>}</div>
+                  <div className="case-document-status"><b>{formatStatus(document.status)}</b>{latestReceiptFor(document.id) && <span>Boleta: {latestReceiptFor(document.id)}</span>}{isOutsideOffice(document.status) && <span className="time-outside">Fuera: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div>
                   <div className="case-document-actions"><button onClick={() => { setCasePreview(null); prepareSend(document); }}>Registrar envío</button><button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}>Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>Ver QR</button></div>
                 </article>
               ))}
