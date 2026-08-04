@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 const supabase = createClient();
+const DEFAULT_DOCUMENT_TYPES = [
+  "PREPRE", "CERTIFICADO", "AVISO PREVENTIVO", "ESCRITURA", "ACTA",
+  "INFORME TEST. REGISTRO", "INFORME TEST. ARCHIVO", "OTROS",
+];
 
 function formatStatus(status) {
   if (status === "REENVIADO") return "REINGRESADO";
@@ -17,7 +21,7 @@ export default function HomePage() {
   const [password, setPassword] = useState("");
   const [number, setNumber] = useState("");
   const [caseFiles, setCaseFiles] = useState([]);
-  const [selectedCaseId, setSelectedCaseId] = useState("");
+  const [caseSearch, setCaseSearch] = useState("");
   const [documentType, setDocumentType] = useState("");
   const [agency, setAgency] = useState("");
   const [documentTypes, setDocumentTypes] = useState([]);
@@ -33,6 +37,11 @@ export default function HomePage() {
   const [historyPreview, setHistoryPreview] = useState(null);
   const [scanMode, setScanMode] = useState("");
   const [activeView, setActiveView] = useState("panel");
+  const [reportMovements, setReportMovements] = useState([]);
+  const [reportStatus, setReportStatus] = useState("");
+  const [reportType, setReportType] = useState("");
+  const [reportStart, setReportStart] = useState("");
+  const [reportEnd, setReportEnd] = useState("");
   const scanInputRef = useRef(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -58,11 +67,13 @@ export default function HomePage() {
       supabase.from("document_types").select("id, name").order("name"),
       supabase.from("agencies").select("id, name").order("name"),
       supabase.from("documents").select("id, qr_token, status, case_files(number), document_types(name), agencies(name)").order("created_at", { ascending: false }),
-    ]).then(([caseResult, typeResult, agencyResult, documentResult]) => {
+      supabase.from("movements").select("id, status, occurred_at, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false }),
+    ]).then(([caseResult, typeResult, agencyResult, documentResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
       setAgencies(agencyResult.data ?? []);
       setDocuments(documentResult.data ?? []);
+      setReportMovements(movementResult.data ?? []);
     });
   }, [session]);
 
@@ -109,7 +120,7 @@ export default function HomePage() {
 
     setNumber("");
     setCaseFiles((current) => [data, ...current]);
-    setSelectedCaseId(data.id);
+    setCaseSearch(data.number);
     setMessage({ type: "success", text: `Expediente ${cleanNumber} guardado correctamente.` });
   }
 
@@ -127,7 +138,12 @@ export default function HomePage() {
 
   async function createDocument(event) {
     event.preventDefault();
-    if (!selectedCaseId || !documentType.trim() || !agency.trim()) return;
+    const selectedCase = caseFiles.find((caseFile) => caseFile.number.toLocaleLowerCase("es-MX") === caseSearch.trim().toLocaleLowerCase("es-MX"));
+    if (!selectedCase) {
+      setMessage({ type: "error", text: "Selecciona un expediente existente de la búsqueda." });
+      return;
+    }
+    if (!documentType.trim() || !agency.trim()) return;
 
     setBusy(true);
     setMessage(null);
@@ -143,7 +159,7 @@ export default function HomePage() {
     }
 
     const { data, error } = await supabase.from("documents").insert({
-      case_file_id: selectedCaseId,
+      case_file_id: selectedCase.id,
       document_type_id: typeRecord.id,
       agency_id: agencyRecord.id,
       status: "EN_OFICINA",
@@ -161,6 +177,8 @@ export default function HomePage() {
     setDocumentType("");
     setAgency("");
     setMessage({ type: "success", text: "Documento agregado con estatus EN OFICINA." });
+    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
+    setReportMovements(refreshedMovements ?? []);
   }
 
   async function showQr(document) {
@@ -252,6 +270,8 @@ export default function HomePage() {
       setMovementNotes("");
     }
     setMessage({ type: "success", text: `Movimiento registrado: ${formatStatus(resolvedStatus)}.` });
+    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
+    setReportMovements(refreshedMovements ?? []);
   }
 
   async function showHistory(document) {
@@ -309,11 +329,20 @@ export default function HomePage() {
     ["RECHAZADO", "Rechazados"], ["AUTORIZADO", "Autorizados"],
     ["REENVIADO", "Reingresados"],
   ];
+  const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name)])].sort((a, b) => a.localeCompare(b, "es"));
+  const filteredReportMovements = reportMovements.filter((movement) => {
+    const movementDate = movement.occurred_at.slice(0, 10);
+    return (!reportStart || movementDate >= reportStart)
+      && (!reportEnd || movementDate <= reportEnd)
+      && (!reportStatus || movement.status === reportStatus)
+      && (!reportType || movement.documents?.document_types?.name === reportType);
+  });
   const viewTitles = {
     panel: ["RESUMEN", "Panel principal"],
     alta: ["CAPTURA", "Nuevo expediente"],
     escanear: ["OPERACIÓN RÁPIDA", "Escanear documentos"],
     consulta: ["CONSULTA", "Buscar documentos"],
+    reportes: ["ANÁLISIS", "Reportes"],
   };
 
   return (
@@ -323,7 +352,7 @@ export default function HomePage() {
         <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
       </div>
       <nav className="main-menu" aria-label="Menú principal">
-        {[["panel", "Panel"], ["alta", "Nuevo expediente"], ["escanear", "Escanear documentos"], ["consulta", "Buscar documentos"]].map(([view, label]) => (
+        {[["panel", "Panel"], ["alta", "Nuevo expediente"], ["escanear", "Escanear documentos"], ["consulta", "Buscar documentos"], ["reportes", "Reportes"]].map(([view, label]) => (
           <button className={activeView === view ? "active" : ""} key={view} onClick={() => setActiveView(view)}>{label}</button>
         ))}
       </nav>
@@ -348,14 +377,10 @@ export default function HomePage() {
       </form>
       <form className="panel case-panel" onSubmit={createDocument}>
         <div><h2>Agregar documento</h2><p>Elige el expediente y captura los datos del documento.</p></div>
-        <label>Expediente
-          <select value={selectedCaseId} onChange={(event) => setSelectedCaseId(event.target.value)} required>
-            <option value="">Seleccionar expediente</option>
-            {caseFiles.map((caseFile) => <option key={caseFile.id} value={caseFile.id}>{caseFile.number}</option>)}
-          </select>
-        </label>
+        <label>Buscar expediente<input list="case-files" value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Escribe parte del número" required /></label>
+        <datalist id="case-files">{caseFiles.map((caseFile) => <option key={caseFile.id} value={caseFile.number} />)}</datalist>
         <label>Tipo de documento<input list="document-types" value={documentType} onChange={(event) => setDocumentType(event.target.value)} placeholder="Ejemplo: Aviso preventivo" required /></label>
-        <datalist id="document-types">{documentTypes.map((item) => <option key={item.id} value={item.name} />)}</datalist>
+        <datalist id="document-types">{availableDocumentTypes.map((name) => <option key={name} value={name} />)}</datalist>
         <label>Dependencia<input list="agencies" value={agency} onChange={(event) => setAgency(event.target.value)} placeholder="Ejemplo: Registro Público" required /></label>
         <datalist id="agencies">{agencies.map((item) => <option key={item.id} value={item.name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</button>
@@ -417,6 +442,19 @@ export default function HomePage() {
             ))}
           </div>
         )}
+      </section>}
+      {activeView === "reportes" && <section className="reports-section">
+        <div className="reports-heading"><div><p className="eyebrow">MOVIMIENTOS</p><h2>Reporte por fecha y tipo de documento</h2></div><strong>{filteredReportMovements.length} movimientos</strong></div>
+        <div className="report-filters">
+          <label>Desde<input type="date" value={reportStart} onChange={(event) => setReportStart(event.target.value)} /></label>
+          <label>Hasta<input type="date" value={reportEnd} onChange={(event) => setReportEnd(event.target.value)} /></label>
+          <label>Estatus<select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}><option value="">Todos</option>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
+          <label>Tipo de documento<select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">Todos</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+        </div>
+        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Fecha</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Movimiento</th></tr></thead><tbody>
+          {filteredReportMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents?.document_types?.name}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.status)}</strong></td></tr>)}
+          {filteredReportMovements.length === 0 && <tr><td colSpan="5">No hay movimientos que coincidan con estos filtros.</td></tr>}
+        </tbody></table></div>
       </section>}
       {qrPreview && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Código QR del documento">
