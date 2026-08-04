@@ -514,21 +514,52 @@ export default function HomePage() {
         <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
       </div>
       <nav className="main-menu" aria-label="Menú principal">
-        {[["panel", "Panel"], ["alta", "Nuevo expediente"], ["escanear", "Escanear documentos"], ["consulta", "Buscar documentos"], ["reportes", "Reportes"], ["archivados", "Archivados"]].map(([view, label]) => (
+        {[["panel", "Panel"], ["alta", "Alta"], ["escanear", "Escanear"], ["consulta", "Buscar"], ["reportes", "Reportes"], ["archivados", "Archivados"]].map(([view, label]) => (
           <button className={activeView === view ? "active" : ""} key={view} onClick={() => setActiveView(view)}>{label}</button>
         ))}
       </nav>
       {activeView === "panel" && <section className="dashboard-view">
-        <div className="welcome-card"><div><p className="eyebrow">DOCUMENTOS</p><h2>Situación actual de la oficina</h2><p>Presiona una tarjeta para consultar los documentos de ese estatus.</p></div><button onClick={() => setActiveView("escanear")}>Escanear documentos</button></div>
-      <section className="dashboard-cards" aria-label="Resumen de documentos">
-        {statusCards.map(([status, label]) => (
-          <button className={`dashboard-card ${statusFilter === status ? "active" : ""}`} key={status} onClick={() => { setStatusFilter(status); setActiveView("consulta"); }}>
-            <strong>{documents.filter((document) => document.status === status).length}</strong><span>{label}</span>
-          </button>
-        ))}
-      </section>
+        <div className="welcome-card">
+          <div>
+            <p className="eyebrow">TRABAJO DE HOY</p>
+            <h2>Elige qué vas a hacer</h2>
+            <p>Botones grandes para la operación diaria: alta, envío, consulta y reportes.</p>
+          </div>
+          <div className="welcome-actions">
+            <button onClick={() => setActiveView("alta")}>Nuevo expediente</button>
+            <button className="secondary" onClick={() => setActiveView("escanear")}>Escanear documentos</button>
+          </div>
+        </div>
+        <section className="quick-actions" aria-label="Acciones principales">
+          {[
+            ["alta", "1", "Alta de expediente", "Agregar expediente y documentos"],
+            ["consulta", "2", "Consultar documentos", "Buscar por expediente, tipo o dependencia"],
+            ["escanear", "3", "Escanear movimientos", "Enviar, autorizar o rechazar en lote"],
+            ["reportes", "4", "Ver reportes", "Filtrar, imprimir o exportar"],
+          ].map(([view, step, title, text]) => (
+            <button className="quick-action-card" key={view} onClick={() => setActiveView(view)}>
+              <span>{step}</span>
+              <strong>{title}</strong>
+              <small>{text}</small>
+            </button>
+          ))}
+        </section>
+        <section className="dashboard-cards" aria-label="Resumen de documentos">
+          {statusCards.map(([status, label]) => (
+            <button className={`dashboard-card ${statusFilter === status ? "active" : ""}`} key={status} onClick={() => { setStatusFilter(status); setActiveView("consulta"); }}>
+              <strong>{documents.filter((document) => document.status === status).length}</strong><span>{label}</span>
+            </button>
+          ))}
+        </section>
       </section>}
-      {activeView === "alta" && <div className="workspace-grid">
+      {activeView === "alta" && <>
+      <section className="operation-strip" aria-label="Flujo de alta">
+        <span>1. Guardar expediente</span>
+        <span>2. Agregar documentos</span>
+        <span>3. Imprimir QR</span>
+        <span>4. Enviar con boleta</span>
+      </section>
+      <div className="workspace-grid">
       <form className="panel case-panel" onSubmit={createCaseFile}>
         <div>
           <h2>Nuevo expediente</h2>
@@ -545,7 +576,8 @@ export default function HomePage() {
         <label>Dependencia<select value={agency} onChange={(event) => setAgency(event.target.value)} required><option value="">Seleccionar dependencia</option>{DEFAULT_AGENCIES.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</button>
       </form>
-      </div>}
+      </div>
+      </>}
       {message && <div className={`notice page-notice ${message.type}`}>{message.text}</div>}
       {activeView === "escanear" && <section className="scanner-section standalone">
         <div className="scanner-heading"><div><p className="eyebrow">OPERACIÓN RÁPIDA</p><h2>Escanear varios documentos</h2></div><span>Selecciona una operación una sola vez y escanea todos los documentos</span></div>
