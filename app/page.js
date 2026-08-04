@@ -62,6 +62,8 @@ export default function HomePage() {
   const [historyPreview, setHistoryPreview] = useState(null);
   const [scanMode, setScanMode] = useState("");
   const [activeView, setActiveView] = useState("panel");
+  const [receiptCaseSearch, setReceiptCaseSearch] = useState("");
+  const [receiptDrafts, setReceiptDrafts] = useState({});
   const [reportMovements, setReportMovements] = useState([]);
   const [reportStatus, setReportStatus] = useState("");
   const [reportType, setReportType] = useState("");
@@ -315,6 +317,50 @@ export default function HomePage() {
     setReportMovements(refreshedMovements ?? []);
   }
 
+  async function registerReceiptSend(document) {
+    const cleanReceipt = (receiptDrafts[document.id] ?? "").trim();
+    if (!cleanReceipt) {
+      setMessage({ type: "error", text: "Escribe el número de boleta antes de marcar el documento como enviado." });
+      return;
+    }
+
+    setBusy(true);
+    setMessage(null);
+    const { data: previousSends, error: historyError } = await supabase
+      .from("movements")
+      .select("id")
+      .eq("document_id", document.id)
+      .in("status", ["ENVIADO", "REENVIADO"])
+      .limit(1);
+
+    if (historyError) {
+      setBusy(false);
+      setMessage({ type: "error", text: "No fue posible comprobar si el documento ya había sido enviado." });
+      return;
+    }
+
+    const resolvedStatus = previousSends.length > 0 ? "REENVIADO" : "ENVIADO";
+    const { error } = await supabase.from("movements").insert({
+      document_id: document.id,
+      status: resolvedStatus,
+      receipt_number: cleanReceipt,
+      notes: "Captura de boleta sin escaneo QR",
+      created_by: session.user.id,
+    });
+    setBusy(false);
+
+    if (error) {
+      setMessage({ type: "error", text: "No fue posible guardar la boleta." });
+      return;
+    }
+
+    setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: resolvedStatus, last_movement_at: new Date().toISOString() } : item));
+    setReceiptDrafts((current) => ({ ...current, [document.id]: "" }));
+    setMessage({ type: "success", text: `Boleta guardada. Documento marcado como ${formatStatus(resolvedStatus)}.` });
+    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
+    setReportMovements(refreshedMovements ?? []);
+  }
+
   async function showHistory(document) {
     setBusy(true);
     const { data, error } = await supabase
@@ -497,11 +543,14 @@ export default function HomePage() {
   const casePreviewDocuments = casePreview
     ? documents.filter((document) => document.case_files.number === casePreview)
     : [];
+  const normalizedReceiptCaseSearch = receiptCaseSearch.trim().toLocaleLowerCase("es-MX");
+  const receiptDocuments = documents.filter((document) => document.status === "EN_OFICINA" && (!normalizedReceiptCaseSearch || document.case_files.number.toLocaleLowerCase("es-MX").includes(normalizedReceiptCaseSearch)));
   const latestReceiptFor = (documentId) => reportMovements.find((movement) => movement.documents?.id === documentId && movement.receipt_number)?.receipt_number;
   const viewTitles = {
     panel: ["RESUMEN", "Panel principal"],
     alta: ["CAPTURA", "Nuevo expediente"],
     escanear: ["OPERACIÓN RÁPIDA", "Escanear documentos"],
+    boletas: ["ENVÍO", "Capturar boletas"],
     consulta: ["CONSULTA", "Buscar documentos"],
     reportes: ["ANÁLISIS", "Reportes"],
     archivados: ["CONTROL", "Documentos archivados"],
@@ -514,7 +563,7 @@ export default function HomePage() {
         <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
       </div>
       <nav className="main-menu" aria-label="Menú principal">
-        {[["panel", "Panel"], ["alta", "Alta"], ["escanear", "Escanear"], ["consulta", "Buscar"], ["reportes", "Reportes"], ["archivados", "Archivados"]].map(([view, label]) => (
+        {[["panel", "Panel"], ["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"], ["consulta", "Buscar"], ["reportes", "Reportes"], ["archivados", "Archivados"]].map(([view, label]) => (
           <button className={activeView === view ? "active" : ""} key={view} onClick={() => setActiveView(view)}>{label}</button>
         ))}
       </nav>
@@ -534,8 +583,9 @@ export default function HomePage() {
           {[
             ["alta", "1", "Alta de expediente", "Agregar expediente y documentos"],
             ["consulta", "2", "Consultar documentos", "Buscar por expediente, tipo o dependencia"],
-            ["escanear", "3", "Escanear movimientos", "Enviar, autorizar o rechazar en lote"],
-            ["reportes", "4", "Ver reportes", "Filtrar, imprimir o exportar"],
+            ["boletas", "3", "Capturar boletas", "Marcar enviados sin tener el QR"],
+            ["escanear", "4", "Escanear regresos", "Autorizar o rechazar cuando regresen"],
+            ["reportes", "5", "Ver reportes", "Filtrar, imprimir o exportar"],
           ].map(([view, step, title, text]) => (
             <button className="quick-action-card" key={view} onClick={() => setActiveView(view)}>
               <span>{step}</span>
@@ -557,7 +607,7 @@ export default function HomePage() {
         <span>1. Guardar expediente</span>
         <span>2. Agregar documentos</span>
         <span>3. Imprimir QR</span>
-        <span>4. Enviar con boleta</span>
+        <span>4. Capturar boleta sin QR</span>
       </section>
       <div className="workspace-grid">
       <form className="panel case-panel" onSubmit={createCaseFile}>
@@ -579,6 +629,24 @@ export default function HomePage() {
       </div>
       </>}
       {message && <div className={`notice page-notice ${message.type}`}>{message.text}</div>}
+
+      {activeView === "boletas" && <section className="receipt-section standalone">
+        <div className="receipt-heading">
+          <div><p className="eyebrow">BOLETAS</p><h2>Capturar boletas de documentos enviados</h2><p>Usa esta pantalla cuando los documentos ya se quedaron en la dependencia y solo recibiste la boleta.</p></div>
+          <strong>{receiptDocuments.length} listos</strong>
+        </div>
+        <label>Buscar expediente<input list="receipt-case-files" value={receiptCaseSearch} onChange={(event) => setReceiptCaseSearch(event.target.value)} placeholder="Escribe parte del número de expediente" /></label>
+        <datalist id="receipt-case-files">{caseFiles.map((caseFile) => <option key={caseFile.id} value={caseFile.number} />)}</datalist>
+        {receiptDocuments.length === 0 ? <p className="empty-state">No hay documentos listos para enviar con esa búsqueda.</p> : <div className="receipt-list">
+          {receiptDocuments.map((document) => (
+            <article className="receipt-row" key={document.id}>
+              <div><strong>{document.case_files.number} · {document.document_types.name}</strong><span>{document.agencies.name}</span></div>
+              <label>Número de boleta<input value={receiptDrafts[document.id] ?? ""} onChange={(event) => setReceiptDrafts((current) => ({ ...current, [document.id]: event.target.value }))} placeholder="Ejemplo: B-12345" maxLength="100" /></label>
+              <button onClick={() => registerReceiptSend(document)} disabled={busy}>Marcar ENVIADO</button>
+            </article>
+          ))}
+        </div>}
+      </section>}
       {activeView === "escanear" && <section className="scanner-section standalone">
         <div className="scanner-heading"><div><p className="eyebrow">OPERACIÓN RÁPIDA</p><h2>Escanear varios documentos</h2></div><span>Selecciona una operación una sola vez y escanea todos los documentos</span></div>
         <div className="scan-modes" aria-label="Operación automática al escanear">
