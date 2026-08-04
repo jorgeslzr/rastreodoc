@@ -48,6 +48,7 @@ export default function HomePage() {
   const [reportType, setReportType] = useState("");
   const [reportStart, setReportStart] = useState("");
   const [reportEnd, setReportEnd] = useState("");
+  const [reportCase, setReportCase] = useState("");
   const scanInputRef = useRef(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -411,10 +412,12 @@ export default function HomePage() {
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name)])].sort((a, b) => a.localeCompare(b, "es"));
   const filteredReportMovements = reportMovements.filter((movement) => {
     const movementDate = movement.occurred_at.slice(0, 10);
+    const caseNumber = movement.documents?.case_files?.number ?? "";
     return (!reportStart || movementDate >= reportStart)
       && (!reportEnd || movementDate <= reportEnd)
       && (!reportStatus || movement.status === reportStatus)
-      && (!reportType || movement.documents?.document_types?.name === reportType);
+      && (!reportType || movement.documents?.document_types?.name === reportType)
+      && (!reportCase.trim() || caseNumber.toLocaleLowerCase("es-MX").includes(reportCase.trim().toLocaleLowerCase("es-MX")));
   });
   const viewTitles = {
     panel: ["RESUMEN", "Panel principal"],
@@ -528,6 +531,8 @@ export default function HomePage() {
       {activeView === "reportes" && <section className="reports-section">
         <div className="reports-heading"><div><p className="eyebrow">MOVIMIENTOS</p><h2>Reporte por fecha y tipo de documento</h2></div><strong>{filteredReportMovements.length} movimientos</strong></div>
         <div className="report-filters">
+          <label>Expediente<input list="report-case-files" value={reportCase} onChange={(event) => setReportCase(event.target.value)} placeholder="Escribe parte del número" /></label>
+          <datalist id="report-case-files">{caseFiles.map((caseFile) => <option key={caseFile.id} value={caseFile.number} />)}</datalist>
           <label>Desde<input type="date" value={reportStart} onChange={(event) => setReportStart(event.target.value)} /></label>
           <label>Hasta<input type="date" value={reportEnd} onChange={(event) => setReportEnd(event.target.value)} /></label>
           <label>Estatus<select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}><option value="">Todos</option>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
