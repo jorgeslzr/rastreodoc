@@ -259,8 +259,32 @@ export default function HomePage() {
     scanInputRef.current?.focus();
   }
 
+  function confirmSensitiveMovement(status, document) {
+    if (!document || !["AUTORIZADO", "RECHAZADO"].includes(status)) return true;
+    return window.confirm(`Vas a marcar ${document.document_types.name} del expediente ${document.case_files.number} como ${formatStatus(status)}. ¿Confirmas que es correcto?`);
+  }
+
+  function activateScanMode(status) {
+    if (scanMode === status) {
+      setScanMode("");
+      setManualMovementReady(false);
+      scanInputRef.current?.focus();
+      return;
+    }
+
+    if (["AUTORIZADO", "RECHAZADO"].includes(status)) {
+      const confirmed = window.confirm(`Activar modo ${formatStatus(status)}. Cada QR escaneado se guardará automáticamente con ese estatus. ¿Confirmas?`);
+      if (!confirmed) return;
+    }
+
+    setScanMode(status);
+    setManualMovementReady(false);
+    scanInputRef.current?.focus();
+  }
+
   async function registerMovement(status, targetDocument = scannedDocument) {
     if (!targetDocument) return;
+    if (!scanMode && !confirmSensitiveMovement(status, targetDocument)) return;
     setBusy(true);
     setMessage(null);
 
@@ -397,6 +421,8 @@ export default function HomePage() {
   async function saveStatusCorrection(event) {
     event.preventDefault();
     if (!editPreview || !correctedStatus) return;
+    const confirmed = window.confirm(`Estatus actual: ${formatStatus(editPreview.status)}. Nuevo estatus: ${formatStatus(correctedStatus)}. ¿Guardar esta corrección?`);
+    if (!confirmed) return;
     setBusy(true);
     setMessage(null);
 
@@ -424,7 +450,7 @@ export default function HomePage() {
   }
 
   async function archiveDocument(document) {
-    const confirmed = window.confirm(`¿Archivar el documento ${document.document_types.name} del expediente ${document.case_files.number}?`);
+    const confirmed = window.confirm(`Vas a archivar ${document.document_types.name} del expediente ${document.case_files.number}. No se borrará el historial, solo se ocultará de la operación diaria. ¿Confirmas?`);
     if (!confirmed) return;
     setBusy(true);
     setMessage(null);
@@ -654,7 +680,7 @@ export default function HomePage() {
         <div className="scanner-heading"><div><p className="eyebrow">OPERACIÓN RÁPIDA</p><h2>Escanear varios documentos</h2></div><span>Selecciona una operación una sola vez y escanea todos los documentos</span></div>
         <div className="scan-modes" aria-label="Operación automática al escanear">
           {[["ENVIADO", "ENVIADO"], ["AUTORIZADO", "AUTORIZADO"], ["RECHAZADO", "RECHAZADO"]].map(([status, label]) => (
-            <button className={scanMode === status ? "active" : ""} key={status} onClick={() => { setScanMode(scanMode === status ? "" : status); setManualMovementReady(false); scanInputRef.current?.focus(); }}>{label}</button>
+            <button className={scanMode === status ? "active" : ""} key={status} onClick={() => activateScanMode(status)}>{label}</button>
           ))}
         </div>
         <p className="scan-mode-help">{scanMode ? `Modo activo: ${formatStatus(scanMode)}. Cada lectura se guardará automáticamente.` : "Sin modo automático: escanea un documento y después elige la acción."}</p>
@@ -806,6 +832,7 @@ export default function HomePage() {
             <p className="eyebrow">CORRECCIÓN</p>
             <h2>Editar estatus</h2>
             <p>{editPreview.case_files.number} · {editPreview.document_types.name}</p>
+            <div className="status-change-preview"><span>Actual</span><strong>{formatStatus(editPreview.status)}</strong><span>Nuevo</span><strong>{formatStatus(correctedStatus)}</strong></div>
             <label>Estatus correcto<select value={correctedStatus} onChange={(event) => setCorrectedStatus(event.target.value)}>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
             <label>Motivo de la corrección (opcional)<input value={correctionNote} onChange={(event) => setCorrectionNote(event.target.value)} placeholder="Ejemplo: Se seleccionó rechazado por error" /></label>
             <div className="edit-actions"><button type="button" className="secondary" onClick={() => setEditPreview(null)}>Cancelar</button><button type="submit" disabled={busy}>Guardar corrección</button></div>

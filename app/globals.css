@@ -105,6 +105,9 @@ button:disabled { opacity:.65; cursor:wait; }
 .edit-modal h2 { margin:0; color:var(--navy); }
 .edit-modal > p:not(.eyebrow),.edit-modal small { color:var(--muted); }
 .edit-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:22px 0 14px; }
+.status-change-preview { display:grid; grid-template-columns:auto 1fr; gap:8px 12px; margin:18px 0; padding:14px; border:1px solid var(--line); border-radius:12px; background:#f7fbfd; }
+.status-change-preview span { color:var(--muted); font-size:12px; font-weight:700; text-transform:uppercase; }
+.status-change-preview strong { color:var(--navy); }
 .case-modal { position:relative; width:min(850px,100%); max-height:88vh; overflow:auto; padding:30px; border-radius:16px; background:white; box-shadow:0 24px 70px rgba(0,0,0,.3); }
 .case-modal h2 { margin:0; color:var(--navy); font-size:30px; }
 .case-modal > p:not(.eyebrow) { color:var(--muted); }
