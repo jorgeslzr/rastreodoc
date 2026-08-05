@@ -11,7 +11,7 @@ const DEFAULT_DOCUMENT_TYPES = [
 const DEFAULT_AGENCIES = [
   "REGISTRO PÚBLICO", "TESORERÍA MUNICIPAL", "ARCHIVO GENERAL DE NOTARÍAS",
 ];
-const USER_DOMAIN = "rastreadoc.local";
+const USER_DOMAIN = "usuarios.rastreadoc.mx";
 const ROLE_LABELS = {
   admin: "Administrador",
   supervisor: "Supervisor",

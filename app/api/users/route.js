@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 
-const USER_DOMAIN = "rastreadoc.local";
+const USER_DOMAIN = "usuarios.rastreadoc.mx";
 const ALLOWED_ROLES = ["admin", "supervisor", "empleado", "consulta"];
 
 function normalizeUsername(username) {
@@ -64,7 +64,11 @@ export async function POST(request) {
   });
 
   if (createError) {
-    return Response.json({ error: createError.message.includes("already") ? "Ese usuario ya existe." : "No fue posible crear el usuario." }, { status: 400 });
+    const errorMessage = createError.message.toLocaleLowerCase("es-MX").includes("already")
+      || createError.message.toLocaleLowerCase("es-MX").includes("registered")
+      ? "Ese usuario ya existe."
+      : `No fue posible crear el usuario: ${createError.message}`;
+    return Response.json({ error: errorMessage }, { status: 400 });
   }
 
   const { error: profileError } = await adminClient.from("profiles").upsert({
@@ -74,7 +78,7 @@ export async function POST(request) {
   });
 
   if (profileError) {
-    return Response.json({ error: "El usuario se creó, pero no se pudo guardar su perfil." }, { status: 500 });
+    return Response.json({ error: `El usuario se creó, pero no se pudo guardar su perfil: ${profileError.message}` }, { status: 500 });
   }
 
   return Response.json({ user: { id: created.user.id, username, role } });
