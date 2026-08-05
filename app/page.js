@@ -69,8 +69,22 @@ function buildQrPayload(token) {
 
 function normalizeScannedToken(value) {
   const cleanValue = value.trim();
-  const lastSegment = cleanValue.split(/[/?#]/).filter(Boolean).at(-1) ?? cleanValue;
-  return lastSegment.replace(/^RDOC:/i, "").trim();
+  const uuid = cleanValue.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  if (uuid) return uuid[0].toLowerCase();
+
+  // Algunos lectores configurados con un teclado distinto sustituyen los dos
+  // puntos y guiones del QR (por ejemplo, "RDOC:" puede llegar como "RDOCÑ").
+  // Después del prefijo solo esperamos los 32 caracteres hexadecimales del UUID,
+  // así que podemos reconstruirlo sin depender de esos signos del teclado.
+  const prefixPosition = cleanValue.toUpperCase().indexOf("RDOC");
+  const tokenPart = prefixPosition >= 0 ? cleanValue.slice(prefixPosition + 4) : cleanValue;
+  const compactUuid = tokenPart.replace(/[^0-9a-f]/gi, "").toLowerCase();
+
+  if (compactUuid.length === 32) {
+    return `${compactUuid.slice(0, 8)}-${compactUuid.slice(8, 12)}-${compactUuid.slice(12, 16)}-${compactUuid.slice(16, 20)}-${compactUuid.slice(20)}`;
+  }
+
+  return tokenPart.trim();
 }
 
 export default function HomePage() {
