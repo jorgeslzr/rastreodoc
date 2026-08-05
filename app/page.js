@@ -45,6 +45,9 @@ export default function HomePage() {
   const [documentType, setDocumentType] = useState("");
   const [agency, setAgency] = useState("");
   const [documentTypes, setDocumentTypes] = useState([]);
+  const [agencies, setAgencies] = useState([]);
+  const [newDocumentTypeName, setNewDocumentTypeName] = useState("");
+  const [newAgencyName, setNewAgencyName] = useState("");
   const [documents, setDocuments] = useState([]);
   const [archivedDocuments, setArchivedDocuments] = useState([]);
   const [qrPreview, setQrPreview] = useState(null);
@@ -100,12 +103,14 @@ export default function HomePage() {
     Promise.all([
       supabase.from("case_files").select("id, number").order("created_at", { ascending: false }),
       supabase.from("document_types").select("id, name").order("name"),
+      supabase.from("agencies").select("id, name").order("name"),
       supabase.from("documents").select("id, qr_token, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }),
       supabase.from("documents").select("id, qr_token, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").not("archived_at", "is", null).order("archived_at", { ascending: false }),
       supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false }),
-    ]).then(([caseResult, typeResult, documentResult, archivedResult, movementResult]) => {
+    ]).then(([caseResult, typeResult, agencyResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
+      setAgencies(agencyResult.data ?? []);
       setDocuments(documentResult.data ?? []);
       setArchivedDocuments(archivedResult.data ?? []);
       setReportMovements(movementResult.data ?? []);
@@ -171,6 +176,26 @@ export default function HomePage() {
     return repeated.data;
   }
 
+  async function addCatalogItem(event, table, value, setter, collectionSetter, successLabel) {
+    event.preventDefault();
+    const cleanName = value.trim().toLocaleUpperCase("es-MX");
+    if (!cleanName) return;
+
+    setBusy(true);
+    setMessage(null);
+    const record = await findOrCreate(table, cleanName);
+    setBusy(false);
+
+    if (!record) {
+      setMessage({ type: "error", text: `No fue posible guardar ${successLabel}.` });
+      return;
+    }
+
+    collectionSetter((current) => current.some(({ id, name }) => id === record.id || name.toLocaleUpperCase("es-MX") === cleanName) ? current : [...current, record].sort((a, b) => a.name.localeCompare(b.name, "es")));
+    setter("");
+    setMessage({ type: "success", text: `${successLabel} guardado correctamente.` });
+  }
+
   async function createDocument(event) {
     event.preventDefault();
     const selectedCase = caseFiles.find((caseFile) => caseFile.number.toLocaleLowerCase("es-MX") === caseSearch.trim().toLocaleLowerCase("es-MX"));
@@ -207,6 +232,7 @@ export default function HomePage() {
     }
 
     setDocumentTypes((current) => current.some(({ id }) => id === typeRecord.id) ? current : [...current, typeRecord]);
+    setAgencies((current) => current.some(({ id }) => id === agencyRecord.id) ? current : [...current, agencyRecord]);
     setDocuments((current) => [data, ...current]);
     setDocumentType("");
     setAgency("");
@@ -557,6 +583,7 @@ export default function HomePage() {
     ["REENVIADO", "Reingresados"],
   ];
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
+  const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)])].sort((a, b) => a.localeCompare(b, "es"));
   const filteredReportMovements = reportMovements.filter((movement) => {
     const movementDate = movement.occurred_at.slice(0, 10);
     const caseNumber = movement.documents?.case_files?.number ?? "";
@@ -582,6 +609,7 @@ export default function HomePage() {
     boletas: ["ENVÍO", "Capturar boletas"],
     consulta: ["CONSULTA", "Buscar documentos"],
     reportes: ["ANÁLISIS", "Reportes"],
+    catalogos: ["CONFIGURACIÓN", "Catálogos"],
     archivados: ["CONTROL", "Documentos archivados"],
   };
 
@@ -592,7 +620,7 @@ export default function HomePage() {
         <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
       </div>
       <nav className="main-menu" aria-label="Menú principal">
-        {[["panel", "Panel"], ["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"], ["consulta", "Buscar"], ["reportes", "Reportes"], ["archivados", "Archivados"]].map(([view, label]) => (
+        {[["panel", "Panel"], ["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"], ["consulta", "Buscar"], ["reportes", "Reportes"], ["catalogos", "Catálogos"], ["archivados", "Archivados"]].map(([view, label]) => (
           <button className={activeView === view ? "active" : ""} key={view} onClick={() => setActiveView(view)}>{label}</button>
         ))}
       </nav>
@@ -615,6 +643,7 @@ export default function HomePage() {
             ["boletas", "3", "Capturar boletas", "Marcar enviados sin tener el QR"],
             ["escanear", "4", "Escanear regresos", "Autorizar o rechazar cuando regresen"],
             ["reportes", "5", "Ver reportes", "Filtrar, imprimir o exportar"],
+            ["catalogos", "6", "Catálogos", "Tipos y dependencias sin errores"],
           ].map(([view, step, title, text]) => (
             <button className="quick-action-card" key={view} onClick={() => setActiveView(view)}>
               <span>{step}</span>
@@ -652,7 +681,7 @@ export default function HomePage() {
         <label>Buscar expediente<input list="case-files" value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Escribe parte del número" required /></label>
         <datalist id="case-files">{caseFiles.map((caseFile) => <option key={caseFile.id} value={caseFile.number} />)}</datalist>
         <label>Tipo de documento<select value={documentType} onChange={(event) => setDocumentType(event.target.value)} required><option value="">Seleccionar tipo</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-        <label>Dependencia<select value={agency} onChange={(event) => setAgency(event.target.value)} required><option value="">Seleccionar dependencia</option>{DEFAULT_AGENCIES.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+        <label>Dependencia<select value={agency} onChange={(event) => setAgency(event.target.value)} required><option value="">Seleccionar dependencia</option>{availableAgencies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</button>
       </form>
       </div>
@@ -751,6 +780,24 @@ export default function HomePage() {
           {filteredReportMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents?.document_types?.name}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
           {filteredReportMovements.length === 0 && <tr><td colSpan="6">No hay movimientos que coincidan con estos filtros.</td></tr>}
         </tbody></table></div>
+      </section>}
+
+      {activeView === "catalogos" && <section className="catalogs-section standalone">
+        <div className="catalogs-heading"><div><p className="eyebrow">CATÁLOGOS</p><h2>Tipos de documento y dependencias</h2><p>Agrega opciones aquí para evitar capturas diferentes del mismo dato.</p></div></div>
+        <div className="catalogs-grid">
+          <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "document_types", newDocumentTypeName, setNewDocumentTypeName, setDocumentTypes, "Tipo de documento")}>
+            <h3>Tipos de documento</h3>
+            <label>Nuevo tipo<input value={newDocumentTypeName} onChange={(event) => setNewDocumentTypeName(event.target.value)} placeholder="Ejemplo: PODER" /></label>
+            <button type="submit" disabled={busy}>Agregar tipo</button>
+            <div className="catalog-tags">{availableDocumentTypes.map((name) => <span key={name}>{name}</span>)}</div>
+          </form>
+          <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "agencies", newAgencyName, setNewAgencyName, setAgencies, "Dependencia")}>
+            <h3>Dependencias</h3>
+            <label>Nueva dependencia<input value={newAgencyName} onChange={(event) => setNewAgencyName(event.target.value)} placeholder="Ejemplo: SECRETARÍA" /></label>
+            <button type="submit" disabled={busy}>Agregar dependencia</button>
+            <div className="catalog-tags">{availableAgencies.map((name) => <span key={name}>{name}</span>)}</div>
+          </form>
+        </div>
       </section>}
       {activeView === "archivados" && <section className="archived-section">
         <div className="archived-heading"><div><p className="eyebrow">DOCUMENTOS OCULTOS</p><h2>Archivados</h2><p>Estos documentos no aparecen en la operación diaria, pero conservan todo su historial.</p></div><strong>{archivedDocuments.length} archivados</strong></div>
