@@ -112,6 +112,7 @@ export default function HomePage() {
   const [newUsername, setNewUsername] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState("consulta");
+  const [passwordDrafts, setPasswordDrafts] = useState({});
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -131,16 +132,6 @@ export default function HomePage() {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 60000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (!documentType) {
-      setAgency("");
-      return;
-    }
-    const mappedAgency = DOCUMENT_AGENCY_MAP[documentType.toLocaleUpperCase("es-MX")];
-    if (mappedAgency) setAgency(mappedAgency);
-    if (documentType === "OTROS") setAgency("");
-  }, [documentType]);
 
   useEffect(() => {
     if (!session) return;
@@ -206,6 +197,39 @@ export default function HomePage() {
     setMessage({ type: "success", text: `Usuario ${result.user.username} creado correctamente.` });
   }
 
+  async function changeUserPassword(profile) {
+    const password = passwordDrafts[profile.id] ?? "";
+    if (password.length < 6) {
+      setMessage({ type: "error", text: "La nueva contraseña debe tener al menos 6 caracteres." });
+      return;
+    }
+
+    const confirmed = window.confirm(`Cambiar contraseña de ${profile.username}. ¿Confirmas?`);
+    if (!confirmed) return;
+
+    setBusy(true);
+    setMessage(null);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const response = await fetch("/api/users", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionData.session?.access_token ?? ""}`,
+      },
+      body: JSON.stringify({ userId: profile.id, password }),
+    });
+    const result = await response.json();
+    setBusy(false);
+
+    if (!response.ok) {
+      setMessage({ type: "error", text: result.error ?? "No fue posible cambiar la contraseña." });
+      return;
+    }
+
+    setPasswordDrafts((current) => ({ ...current, [profile.id]: "" }));
+    setMessage({ type: "success", text: `Contraseña de ${profile.username} actualizada correctamente.` });
+  }
+
   async function createCaseFile(event) {
     event.preventDefault();
     const cleanNumber = number.trim();
@@ -250,6 +274,13 @@ export default function HomePage() {
 
     const repeated = await supabase.from(table).select("id, name").eq("name", cleanName).single();
     return repeated.data;
+  }
+
+  function changeDocumentType(nextType) {
+    setDocumentType(nextType);
+    const mappedAgency = DOCUMENT_AGENCY_MAP[nextType.toLocaleUpperCase("es-MX")];
+    if (mappedAgency) setAgency(mappedAgency);
+    if (!nextType || nextType === "OTROS") setAgency("");
   }
 
   async function addCatalogItem(event, table, value, setter, collectionSetter, successLabel) {
@@ -761,7 +792,7 @@ export default function HomePage() {
         <div><h2>Agregar documento</h2><p>Elige el expediente y captura los datos. Puedes agregar varias veces el mismo tipo de documento.</p></div>
         <label>Buscar expediente<input list="case-files" value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Escribe parte del número" required /></label>
         <datalist id="case-files">{caseFiles.map((caseFile) => <option key={caseFile.id} value={caseFile.number} />)}</datalist>
-        <label>Tipo de documento<select value={documentType} onChange={(event) => setDocumentType(event.target.value)} required><option value="">Seleccionar tipo</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+        <label>Tipo de documento<select value={documentType} onChange={(event) => changeDocumentType(event.target.value)} required><option value="">Seleccionar tipo</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
         <label>Identificador para distinguirlo (opcional)<input value={documentLabel} onChange={(event) => setDocumentLabel(event.target.value)} placeholder="Ejemplo: Original, Copia 1, Segundo certificado" maxLength="120" /></label>
         {documentType === "OTROS" ? <label>Dependencia manual<input list="agency-options" value={agency} onChange={(event) => setAgency(event.target.value)} placeholder="Escribe o selecciona dependencia" required /></label> : <label>Dependencia automática<select value={agency} onChange={(event) => setAgency(event.target.value)} required disabled={Boolean(DOCUMENT_AGENCY_MAP[documentType.toLocaleUpperCase("es-MX")])}><option value="">Seleccionar dependencia</option>{availableAgencies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>}
         <datalist id="agency-options">{availableAgencies.map((name) => <option key={name} value={name} />)}</datalist>
@@ -895,7 +926,7 @@ export default function HomePage() {
           </form>
           <div className="user-card">
             <h3>Usuarios creados</h3>
-            <div className="user-list">{profiles.length === 0 ? <p className="empty-state">Todavía no hay usuarios registrados en perfiles.</p> : profiles.map((profile) => <div key={profile.id}><strong>{profile.username}</strong><span>{ROLE_LABELS[profile.role] ?? profile.role}</span></div>)}</div>
+            <div className="user-list">{profiles.length === 0 ? <p className="empty-state">Todavía no hay usuarios registrados en perfiles.</p> : profiles.map((profile) => <div className="user-list-row" key={profile.id}><div><strong>{profile.username}</strong><span>{ROLE_LABELS[profile.role] ?? profile.role}</span></div><label>Nueva contraseña<input type="password" value={passwordDrafts[profile.id] ?? ""} onChange={(event) => setPasswordDrafts((current) => ({ ...current, [profile.id]: event.target.value }))} placeholder="Mínimo 6 caracteres" /></label><button type="button" className="secondary" onClick={() => changeUserPassword(profile)} disabled={busy}>Cambiar contraseña</button></div>)}</div>
           </div>
         </div>}
       </section>}

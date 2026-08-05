@@ -11,16 +11,17 @@ function usernameToEmail(username) {
   return `${normalizeUsername(username)}@${USER_DOMAIN}`;
 }
 
-export async function POST(request) {
+
+async function getAuthorizedAdminClient(request) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseUrl || !serviceRoleKey) {
-    return Response.json({ error: "Falta configurar SUPABASE_SERVICE_ROLE_KEY en Vercel." }, { status: 500 });
+    return { response: Response.json({ error: "Falta configurar SUPABASE_SERVICE_ROLE_KEY en Vercel." }, { status: 500 }) };
   }
 
   const token = request.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return Response.json({ error: "Sesión requerida." }, { status: 401 });
+  if (!token) return { response: Response.json({ error: "Sesión requerida." }, { status: 401 }) };
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -28,7 +29,7 @@ export async function POST(request) {
 
   const { data: requesterData, error: requesterError } = await adminClient.auth.getUser(token);
   if (requesterError || !requesterData.user) {
-    return Response.json({ error: "Sesión inválida." }, { status: 401 });
+    return { response: Response.json({ error: "Sesión inválida." }, { status: 401 }) };
   }
 
   const { data: requesterProfile } = await adminClient
@@ -38,8 +39,14 @@ export async function POST(request) {
     .maybeSingle();
   const requesterRole = requesterProfile?.role ?? "admin";
   if (!["admin", "supervisor"].includes(requesterRole)) {
-    return Response.json({ error: "No tienes permiso para crear usuarios." }, { status: 403 });
+    return { response: Response.json({ error: "No tienes permiso para administrar usuarios." }, { status: 403 }) };
   }
+
+  return { adminClient };
+}
+export async function POST(request) {
+  const { adminClient, response } = await getAuthorizedAdminClient(request);
+  if (response) return response;
 
   const body = await request.json();
   const username = normalizeUsername(body.username ?? "");
@@ -82,4 +89,27 @@ export async function POST(request) {
   }
 
   return Response.json({ user: { id: created.user.id, username, role } });
+}
+
+export async function PATCH(request) {
+  const { adminClient, response } = await getAuthorizedAdminClient(request);
+  if (response) return response;
+
+  const body = await request.json();
+  const userId = body.userId;
+  const password = String(body.password ?? "");
+
+  if (!userId) {
+    return Response.json({ error: "Selecciona un usuario." }, { status: 400 });
+  }
+  if (password.length < 6) {
+    return Response.json({ error: "La nueva contraseña debe tener al menos 6 caracteres." }, { status: 400 });
+  }
+
+  const { error } = await adminClient.auth.admin.updateUserById(userId, { password });
+  if (error) {
+    return Response.json({ error: `No fue posible cambiar la contraseña: ${error.message}` }, { status: 400 });
+  }
+
+  return Response.json({ ok: true });
 }
