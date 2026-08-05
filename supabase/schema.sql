@@ -18,6 +18,22 @@ exception
 end
 $$;
 
+do $$
+begin
+  create type public.app_role as enum ('admin', 'supervisor', 'empleado', 'consulta');
+exception
+  when duplicate_object then null;
+end
+$$;
+
+
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  username citext not null unique check (length(trim(username::text)) >= 3),
+  role public.app_role not null default 'consulta',
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.agencies (
   id uuid primary key default gen_random_uuid(),
   name citext not null unique check (length(trim(name::text)) > 0),
@@ -129,11 +145,16 @@ create trigger movements_are_immutable
 before update or delete on public.movements
 for each row execute function public.prevent_movement_changes();
 
+alter table public.profiles enable row level security;
 alter table public.agencies enable row level security;
 alter table public.document_types enable row level security;
 alter table public.case_files enable row level security;
 alter table public.documents enable row level security;
 alter table public.movements enable row level security;
+
+drop policy if exists "authenticated_profiles_read" on public.profiles;
+create policy "authenticated_profiles_read" on public.profiles
+for select to authenticated using (true);
 
 drop policy if exists "authenticated_agencies" on public.agencies;
 create policy "authenticated_agencies" on public.agencies
@@ -159,9 +180,11 @@ drop policy if exists "authenticated_movements_insert" on public.movements;
 create policy "authenticated_movements_insert" on public.movements
 for insert to authenticated with check (created_by = auth.uid());
 
+revoke all on public.profiles from anon;
 revoke all on public.agencies, public.document_types, public.case_files,
   public.documents, public.movements from anon;
 
+grant select on public.profiles to authenticated;
 grant select, insert on public.agencies, public.document_types,
   public.case_files to authenticated;
 grant select, insert, update on public.documents to authenticated;

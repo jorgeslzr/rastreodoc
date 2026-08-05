@@ -11,6 +11,14 @@ const DEFAULT_DOCUMENT_TYPES = [
 const DEFAULT_AGENCIES = [
   "REGISTRO PÚBLICO", "TESORERÍA MUNICIPAL", "ARCHIVO GENERAL DE NOTARÍAS",
 ];
+const USER_DOMAIN = "rastreadoc.local";
+const ROLE_LABELS = {
+  admin: "Administrador",
+  supervisor: "Supervisor",
+  empleado: "Empleado",
+  consulta: "Consulta",
+};
+
 const DOCUMENT_AGENCY_MAP = {
   PREVENTIVO: "REGISTRO PÚBLICO",
   PREVEVENTIVO: "REGISTRO PÚBLICO",
@@ -22,6 +30,11 @@ const DOCUMENT_AGENCY_MAP = {
   ISAI: "TESORERÍA MUNICIPAL",
   "INFORME TEST. ARCHIVO": "ARCHIVO GENERAL DE NOTARÍAS",
 };
+
+function usernameToEmail(username) {
+  const cleanUsername = username.trim().toLocaleLowerCase("es-MX").replace(/\s+/g, "_");
+  return cleanUsername.includes("@") ? cleanUsername : `${cleanUsername}@${USER_DOMAIN}`;
+}
 
 function formatDocumentName(document) {
   const label = document.label?.trim();
@@ -94,6 +107,11 @@ export default function HomePage() {
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const scanInputRef = useRef(null);
   const [message, setMessage] = useState(null);
+  const [currentRole, setCurrentRole] = useState("admin");
+  const [profiles, setProfiles] = useState([]);
+  const [newUsername, setNewUsername] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserRole, setNewUserRole] = useState("consulta");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -131,13 +149,16 @@ export default function HomePage() {
       supabase.from("case_files").select("id, number").order("created_at", { ascending: false }),
       supabase.from("document_types").select("id, name").order("name"),
       supabase.from("agencies").select("id, name").order("name"),
+      supabase.from("profiles").select("id, username, role").order("created_at", { ascending: false }),
       supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }),
       supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").not("archived_at", "is", null).order("archived_at", { ascending: false }),
       supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, label, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false }),
-    ]).then(([caseResult, typeResult, agencyResult, documentResult, archivedResult, movementResult]) => {
+    ]).then(([caseResult, typeResult, agencyResult, profileResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
       setAgencies(agencyResult.data ?? []);
+      setProfiles(profileResult.data ?? []);
+      setCurrentRole(profileResult.data?.find((profile) => profile.id === session.user.id)?.role ?? "admin");
       setDocuments(documentResult.data ?? []);
       setArchivedDocuments(archivedResult.data ?? []);
       setReportMovements(movementResult.data ?? []);
@@ -149,12 +170,40 @@ export default function HomePage() {
     setBusy(true);
     setMessage(null);
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({ email: usernameToEmail(email), password });
     setBusy(false);
 
     if (error) {
       setMessage({ type: "error", text: "Correo o contraseña incorrectos." });
     }
+  }
+
+  async function createSystemUser(event) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage(null);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const response = await fetch("/api/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionData.session?.access_token ?? ""}`,
+      },
+      body: JSON.stringify({ username: newUsername, password: newUserPassword, role: newUserRole }),
+    });
+    const result = await response.json();
+    setBusy(false);
+
+    if (!response.ok) {
+      setMessage({ type: "error", text: result.error ?? "No fue posible crear el usuario." });
+      return;
+    }
+
+    setProfiles((current) => [result.user, ...current.filter((profile) => profile.id !== result.user.id)]);
+    setNewUsername("");
+    setNewUserPassword("");
+    setNewUserRole("consulta");
+    setMessage({ type: "success", text: `Usuario ${result.user.username} creado correctamente.` });
   }
 
   async function createCaseFile(event) {
@@ -588,7 +637,7 @@ export default function HomePage() {
         <form className="panel login-panel" onSubmit={signIn}>
           <h2>Iniciar sesión</h2>
           <p>Utiliza el usuario que creaste en Supabase.</p>
-          <label>Correo electrónico<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
+          <label>Usuario o correo<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Ejemplo: supervisor" required /></label>
           <label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
           {message && <div className={`notice ${message.type}`}>{message.text}</div>}
           <button type="submit" disabled={busy}>{busy ? "Ingresando…" : "Ingresar"}</button>
@@ -611,6 +660,9 @@ export default function HomePage() {
     ["RECHAZADO", "Rechazados"], ["AUTORIZADO", "Autorizados"],
     ["REENVIADO", "Reingresados"],
   ];
+  const canManageAll = ["admin", "supervisor"].includes(currentRole);
+  const canOperate = canManageAll || currentRole === "empleado";
+  const canManageUsers = canManageAll;
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)])].sort((a, b) => a.localeCompare(b, "es"));
   const filteredReportMovements = reportMovements.filter((movement) => {
@@ -639,6 +691,7 @@ export default function HomePage() {
     consulta: ["CONSULTA", "Buscar documentos"],
     reportes: ["ANÁLISIS", "Reportes"],
     catalogos: ["CONFIGURACIÓN", "Catálogos"],
+    usuarios: ["SEGURIDAD", "Usuarios"],
     archivados: ["CONTROL", "Documentos archivados"],
   };
 
@@ -649,7 +702,7 @@ export default function HomePage() {
         <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
       </div>
       <nav className="main-menu" aria-label="Menú principal">
-        {[["panel", "Panel"], ["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"], ["consulta", "Buscar"], ["reportes", "Reportes"], ["catalogos", "Catálogos"], ["archivados", "Archivados"]].map(([view, label]) => (
+        {[["panel", "Panel"], ...(canOperate ? [["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"]] : []), ["consulta", "Buscar"], ["reportes", "Reportes"], ...(canManageAll ? [["catalogos", "Catálogos"], ["usuarios", "Usuarios"], ["archivados", "Archivados"]] : [])].map(([view, label]) => (
           <button className={activeView === view ? "active" : ""} key={view} onClick={() => setActiveView(view)}>{label}</button>
         ))}
       </nav>
@@ -667,12 +720,11 @@ export default function HomePage() {
         </div>
         <section className="quick-actions" aria-label="Acciones principales">
           {[
-            ["alta", "1", "Alta de expediente", "Agregar expediente y documentos"],
+            ...(canOperate ? [["alta", "1", "Alta de expediente", "Agregar expediente y documentos"]] : []),
             ["consulta", "2", "Consultar documentos", "Buscar por expediente, tipo o dependencia"],
-            ["boletas", "3", "Capturar boletas", "Marcar enviados sin tener el QR"],
-            ["escanear", "4", "Escanear regresos", "Autorizar o rechazar cuando regresen"],
+            ...(canOperate ? [["boletas", "3", "Capturar boletas", "Marcar enviados sin tener el QR"], ["escanear", "4", "Escanear regresos", "Autorizar o rechazar cuando regresen"]] : []),
             ["reportes", "5", "Ver reportes", "Filtrar, imprimir o exportar"],
-            ["catalogos", "6", "Catálogos", "Tipos y dependencias sin errores"],
+            ...(canManageAll ? [["catalogos", "6", "Catálogos", "Tipos y dependencias sin errores"], ["usuarios", "7", "Usuarios", "Altas y permisos simples"]] : []),
           ].map(([view, step, title, text]) => (
             <button className="quick-action-card" key={view} onClick={() => setActiveView(view)}>
               <span>{step}</span>
@@ -790,7 +842,7 @@ export default function HomePage() {
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
                 <div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{isOutsideOffice(document.status) && <span className="time-outside">Fuera de la oficina: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div>
-                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button><button onClick={() => prepareSend(document)}>Registrar envío</button><button className="secondary" onClick={() => prepareCorrection(document)}>Editar estatus</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button><button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button></div>
+                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar estatus</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
               </article>
             ))}
           </div>
@@ -829,6 +881,23 @@ export default function HomePage() {
             <div className="catalog-tags">{availableAgencies.map((name) => <span key={name}>{name}</span>)}</div>
           </form>
         </div>
+      </section>}
+
+      {activeView === "usuarios" && <section className="users-section standalone">
+        <div className="users-heading"><div><p className="eyebrow">PERMISOS</p><h2>Usuarios del sistema</h2><p>El usuario entra con nombre de usuario y contraseña; no necesita escribir correo.</p></div><strong>{ROLE_LABELS[currentRole]}</strong></div>
+        {!canManageUsers ? <p className="empty-state">Tu perfil solo permite consultar información.</p> : <div className="users-grid">
+          <form className="user-card" onSubmit={createSystemUser}>
+            <h3>Crear usuario</h3>
+            <label>Usuario<input value={newUsername} onChange={(event) => setNewUsername(event.target.value)} placeholder="Ejemplo: supervisor1" required /></label>
+            <label>Contraseña<input type="password" value={newUserPassword} onChange={(event) => setNewUserPassword(event.target.value)} placeholder="Mínimo 6 caracteres" required /></label>
+            <label>Permiso<select value={newUserRole} onChange={(event) => setNewUserRole(event.target.value)}>{Object.entries(ROLE_LABELS).map(([role, label]) => <option key={role} value={role}>{label}</option>)}</select></label>
+            <button type="submit" disabled={busy}>{busy ? "Creando…" : "Crear usuario"}</button>
+          </form>
+          <div className="user-card">
+            <h3>Usuarios creados</h3>
+            <div className="user-list">{profiles.length === 0 ? <p className="empty-state">Todavía no hay usuarios registrados en perfiles.</p> : profiles.map((profile) => <div key={profile.id}><strong>{profile.username}</strong><span>{ROLE_LABELS[profile.role] ?? profile.role}</span></div>)}</div>
+          </div>
+        </div>}
       </section>}
       {activeView === "archivados" && <section className="archived-section">
         <div className="archived-heading"><div><p className="eyebrow">DOCUMENTOS OCULTOS</p><h2>Archivados</h2><p>Estos documentos no aparecen en la operación diaria, pero conservan todo su historial.</p></div><strong>{archivedDocuments.length} archivados</strong></div>
@@ -869,7 +938,7 @@ export default function HomePage() {
                     <strong>{new Date(document.last_movement_at).toLocaleString("es-MX")}</strong>
                     {isOutsideOffice(document.status) && <small className="time-outside">Fuera: {formatTimeOutside(document.last_movement_at, currentTime)}</small>}
                   </div>
-                  <div className="case-document-actions"><button onClick={() => { setCasePreview(null); prepareSend(document); }}>Registrar envío</button><button className="secondary" onClick={() => { setCasePreview(null); prepareCorrection(document); }}>Editar</button><button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}>Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>QR</button></div>
+                  <div className="case-document-actions">{canOperate && <button onClick={() => { setCasePreview(null); prepareSend(document); }}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => { setCasePreview(null); prepareCorrection(document); }}>Editar</button>}<button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}>Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>QR</button></div>
                 </article>
               ))}
             </div>
