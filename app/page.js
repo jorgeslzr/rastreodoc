@@ -108,6 +108,7 @@ export default function HomePage() {
   const scanInputRef = useRef(null);
   const [message, setMessage] = useState(null);
   const [currentRole, setCurrentRole] = useState("admin");
+  const [currentUsername, setCurrentUsername] = useState("");
   const [profiles, setProfiles] = useState([]);
   const [newUsername, setNewUsername] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
@@ -149,7 +150,9 @@ export default function HomePage() {
       setDocumentTypes(typeResult.data ?? []);
       setAgencies(agencyResult.data ?? []);
       setProfiles(profileResult.data ?? []);
-      setCurrentRole(profileResult.data?.find((profile) => profile.id === session.user.id)?.role ?? "admin");
+      const sessionProfile = profileResult.data?.find((profile) => profile.id === session.user.id);
+      setCurrentRole(sessionProfile?.role ?? "admin");
+      setCurrentUsername(sessionProfile?.username ?? session.user.email?.split("@")[0] ?? "usuario");
       setDocuments(documentResult.data ?? []);
       setArchivedDocuments(archivedResult.data ?? []);
       setReportMovements(movementResult.data ?? []);
@@ -228,6 +231,33 @@ export default function HomePage() {
 
     setPasswordDrafts((current) => ({ ...current, [profile.id]: "" }));
     setMessage({ type: "success", text: `Contraseña de ${profile.username} actualizada correctamente.` });
+  }
+
+  async function deleteSystemUser(profile) {
+    const confirmed = window.confirm(`Eliminar usuario ${profile.username}. Esta acción no elimina movimientos históricos. ¿Confirmas?`);
+    if (!confirmed) return;
+
+    setBusy(true);
+    setMessage(null);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const response = await fetch("/api/users", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionData.session?.access_token ?? ""}`,
+      },
+      body: JSON.stringify({ userId: profile.id }),
+    });
+    const result = await response.json();
+    setBusy(false);
+
+    if (!response.ok) {
+      setMessage({ type: "error", text: result.error ?? "No fue posible eliminar el usuario." });
+      return;
+    }
+
+    setProfiles((current) => current.filter((item) => item.id !== profile.id));
+    setMessage({ type: "success", text: `Usuario ${profile.username} eliminado correctamente.` });
   }
 
   async function createCaseFile(event) {
@@ -730,7 +760,7 @@ export default function HomePage() {
     <main className="page-shell">
       <div className="page-heading">
         <div><p className="eyebrow">{viewTitles[activeView][0]}</p><h1>{viewTitles[activeView][1]}</h1></div>
-        <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
+        <div className="session-box"><span>En sesión</span><strong>{currentUsername}</strong><small>{ROLE_LABELS[currentRole]}</small><button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button></div>
       </div>
       <nav className="main-menu" aria-label="Menú principal">
         {[["panel", "Panel"], ...(canOperate ? [["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"]] : []), ["consulta", "Buscar"], ["reportes", "Reportes"], ...(canManageAll ? [["catalogos", "Catálogos"], ["usuarios", "Usuarios"], ["archivados", "Archivados"]] : [])].map(([view, label]) => (
@@ -926,7 +956,7 @@ export default function HomePage() {
           </form>
           <div className="user-card">
             <h3>Usuarios creados</h3>
-            <div className="user-list">{profiles.length === 0 ? <p className="empty-state">Todavía no hay usuarios registrados en perfiles.</p> : profiles.map((profile) => <div className="user-list-row" key={profile.id}><div><strong>{profile.username}</strong><span>{ROLE_LABELS[profile.role] ?? profile.role}</span></div><label>Nueva contraseña<input type="password" value={passwordDrafts[profile.id] ?? ""} onChange={(event) => setPasswordDrafts((current) => ({ ...current, [profile.id]: event.target.value }))} placeholder="Mínimo 6 caracteres" /></label><button type="button" className="secondary" onClick={() => changeUserPassword(profile)} disabled={busy}>Cambiar contraseña</button></div>)}</div>
+            <div className="user-list">{profiles.length === 0 ? <p className="empty-state">Todavía no hay usuarios registrados en perfiles.</p> : profiles.map((profile) => <div className="user-list-row" key={profile.id}><div><strong>{profile.username}</strong><span>{ROLE_LABELS[profile.role] ?? profile.role}</span></div><label>Nueva contraseña<input type="password" value={passwordDrafts[profile.id] ?? ""} onChange={(event) => setPasswordDrafts((current) => ({ ...current, [profile.id]: event.target.value }))} placeholder="Mínimo 6 caracteres" /></label><button type="button" className="secondary" onClick={() => changeUserPassword(profile)} disabled={busy}>Cambiar contraseña</button><button type="button" className="archive-button" onClick={() => deleteSystemUser(profile)} disabled={busy || profile.id === session.user.id}>Eliminar</button></div>)}</div>
           </div>
         </div>}
       </section>}

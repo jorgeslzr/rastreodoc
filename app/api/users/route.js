@@ -42,7 +42,7 @@ async function getAuthorizedAdminClient(request) {
     return { response: Response.json({ error: "No tienes permiso para administrar usuarios." }, { status: 403 }) };
   }
 
-  return { adminClient };
+  return { adminClient, requesterId: requesterData.user.id };
 }
 export async function POST(request) {
   const { adminClient, response } = await getAuthorizedAdminClient(request);
@@ -109,6 +109,28 @@ export async function PATCH(request) {
   const { error } = await adminClient.auth.admin.updateUserById(userId, { password });
   if (error) {
     return Response.json({ error: `No fue posible cambiar la contraseña: ${error.message}` }, { status: 400 });
+  }
+
+  return Response.json({ ok: true });
+}
+
+export async function DELETE(request) {
+  const { adminClient, requesterId, response } = await getAuthorizedAdminClient(request);
+  if (response) return response;
+
+  const body = await request.json();
+  const userId = body.userId;
+
+  if (!userId) {
+    return Response.json({ error: "Selecciona un usuario." }, { status: 400 });
+  }
+  if (userId === requesterId) {
+    return Response.json({ error: "No puedes eliminar el usuario con el que estás trabajando." }, { status: 400 });
+  }
+
+  const { error } = await adminClient.auth.admin.deleteUser(userId);
+  if (error) {
+    return Response.json({ error: `No fue posible eliminar el usuario: ${error.message}` }, { status: 400 });
   }
 
   return Response.json({ ok: true });
