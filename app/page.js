@@ -63,6 +63,16 @@ function isOutsideOffice(status) {
   return ["ENVIADO", "REENVIADO"].includes(status);
 }
 
+function buildQrPayload(token) {
+  return `RDOC:${token}`;
+}
+
+function normalizeScannedToken(value) {
+  const cleanValue = value.trim();
+  const lastSegment = cleanValue.split(/[/?#]/).filter(Boolean).at(-1) ?? cleanValue;
+  return lastSegment.replace(/^RDOC:/i, "").trim();
+}
+
 export default function HomePage() {
   const [session, setSession] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -81,6 +91,7 @@ export default function HomePage() {
   const [documents, setDocuments] = useState([]);
   const [archivedDocuments, setArchivedDocuments] = useState([]);
   const [qrPreview, setQrPreview] = useState(null);
+  const [selectedQrIds, setSelectedQrIds] = useState([]);
   const [scanToken, setScanToken] = useState("");
   const [scannedDocument, setScannedDocument] = useState(null);
   const [rejectionReason, setRejectionReason] = useState("");
@@ -382,8 +393,16 @@ export default function HomePage() {
 
   async function showQr(document) {
     const QRCode = (await import("qrcode")).default;
-    const dataUrl = await QRCode.toDataURL(document.qr_token, { width: 360, margin: 2 });
+    const dataUrl = await QRCode.toDataURL(buildQrPayload(document.qr_token), { width: 420, margin: 1, errorCorrectionLevel: "H" });
     setQrPreview({ document, dataUrl });
+  }
+
+  function buildLabelHtml(document, dataUrl) {
+    return `<section class="label"><img class="qr" src="${dataUrl}"><div class="info"><div class="brand">RASTREADOC</div><div class="case">${escapeHtml(document.case_files.number)}</div><div class="text">${escapeHtml(formatDocumentName(document))}</div><div class="text agency">${escapeHtml(document.agencies.name)}</div><div class="hint">Escanear para movimiento</div></div></section>`;
+  }
+
+  function labelPrintStyles() {
+    return `@page{size:40mm 30mm;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:Arial,sans-serif;color:#111}.label{width:40mm;height:30mm;display:grid;grid-template-columns:20mm 1fr;gap:1.2mm;align-items:center;padding:1.5mm;overflow:hidden;break-after:page;page-break-after:always}.label:last-child{break-after:auto;page-break-after:auto}.qr{width:20mm;height:20mm}.info{min-width:0}.brand{font-size:5pt;font-weight:800;letter-spacing:.04em}.case{font-size:8pt;font-weight:800;line-height:1.05;margin:.6mm 0}.text{font-size:5pt;line-height:1.05;margin:.5mm 0;word-break:break-word}.agency{font-size:4.6pt}.hint{font-size:4pt;margin-top:.7mm}@media screen{body{display:grid;place-items:center;gap:8px;min-height:100vh;background:#eee}.label{background:white;border:1px solid #ddd;transform:scale(2.5);transform-origin:center;margin:26mm}}@media print{button{display:none}}`;
   }
 
   function printQr() {
@@ -391,13 +410,36 @@ export default function HomePage() {
     if (!popup || !qrPreview) return;
 
     const { document, dataUrl } = qrPreview;
-    popup.document.write(`<!doctype html><html><head><title>QR ${escapeHtml(document.case_files.number)}</title><style>body{font-family:Arial;text-align:center;padding:30px}img{width:320px;max-width:100%}h1{font-size:24px;margin:0 0 8px}p{margin:6px}</style></head><body><h1>Expediente ${escapeHtml(document.case_files.number)}</h1><p>${escapeHtml(formatDocumentName(document))}</p><p>${escapeHtml(document.agencies.name)}</p><img src="${dataUrl}" onload="window.print()"><p>RASTREADOC</p></body></html>`);
+    popup.document.write(`<!doctype html><html><head><title>QR ${escapeHtml(document.case_files.number)}</title><style>${labelPrintStyles()}</style></head><body>${buildLabelHtml(document, dataUrl)}<script>window.onload=()=>window.print()</script></body></html>`);
     popup.document.close();
+  }
+
+  async function printSelectedQrLabels() {
+    const selectedDocuments = documents.filter((document) => selectedQrIds.includes(document.id) && document.status === "EN_OFICINA");
+    if (selectedDocuments.length === 0) {
+      setMessage({ type: "error", text: "Selecciona al menos un documento listo para enviar." });
+      return;
+    }
+
+    const QRCode = (await import("qrcode")).default;
+    const labels = await Promise.all(selectedDocuments.map(async (document) => {
+      const dataUrl = await QRCode.toDataURL(buildQrPayload(document.qr_token), { width: 420, margin: 1, errorCorrectionLevel: "H" });
+      return buildLabelHtml(document, dataUrl);
+    }));
+
+    const popup = window.open("", "_blank", "width=900,height=700");
+    if (!popup) return;
+    popup.document.write(`<!doctype html><html><head><title>Etiquetas RASTREADOC</title><style>${labelPrintStyles()}</style></head><body>${labels.join("")}<script>window.onload=()=>window.print()</script></body></html>`);
+    popup.document.close();
+  }
+
+  function toggleQrSelection(documentId) {
+    setSelectedQrIds((current) => current.includes(documentId) ? current.filter((id) => id !== documentId) : [...current, documentId]);
   }
 
   async function scanDocument(event) {
     event.preventDefault();
-    const token = scanToken.trim();
+    const token = normalizeScannedToken(scanToken);
     if (!token) return;
 
     setBusy(true);
@@ -890,7 +932,7 @@ export default function HomePage() {
         )}
       </section>}
       {activeView === "consulta" && <section className="documents-section standalone">
-        <div><p className="eyebrow">CONSULTA</p><h2>Todos los documentos</h2></div>
+        <div className="documents-heading"><div><p className="eyebrow">CONSULTA</p><h2>Todos los documentos</h2></div><button className="secondary" onClick={printSelectedQrLabels}>Imprimir QR seleccionados ({selectedQrIds.length})</button></div>
         <div className="document-filters">
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar expediente, documento o dependencia" aria-label="Buscar documentos" />
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filtrar por estatus">
@@ -902,7 +944,7 @@ export default function HomePage() {
           <div className="documents-list">
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
-                <div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{isOutsideOffice(document.status) && <span className="time-outside">Fuera de la oficina: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div>
+                <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{isOutsideOffice(document.status) && <span className="time-outside">Fuera de la oficina: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
                 <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar estatus</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
               </article>
             ))}
@@ -1012,9 +1054,9 @@ export default function HomePage() {
             <button className="modal-close" onClick={() => setQrPreview(null)} aria-label="Cerrar">×</button>
             <p className="eyebrow">CÓDIGO QR</p>
             <h2>Expediente {qrPreview.document.case_files.number}</h2>
-            <p>{formatDocumentName(qrPreview.document)} · {qrPreview.document.agencies.name}</p>
+            <p>{formatDocumentName(qrPreview.document)} · {qrPreview.document.agencies.name}</p><small>Formato de impresión: etiqueta 40 × 30 mm</small>
             <img src={qrPreview.dataUrl} alt={`QR del expediente ${qrPreview.document.case_files.number}`} />
-            <button onClick={printQr}>Imprimir QR</button>
+            <button onClick={printQr}>Imprimir etiqueta 40 × 30 mm</button>
           </section>
         </div>
       )}
