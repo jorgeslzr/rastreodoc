@@ -543,6 +543,9 @@ export default function HomePage() {
   const casePreviewDocuments = casePreview
     ? documents.filter((document) => document.case_files.number === casePreview)
     : [];
+  const caseStatusSummary = statusCards
+    .map(([status, label]) => [status, label, casePreviewDocuments.filter((document) => document.status === status).length])
+    .filter(([, , count]) => count > 0);
   const normalizedReceiptCaseSearch = receiptCaseSearch.trim().toLocaleLowerCase("es-MX");
   const receiptDocuments = documents.filter((document) => document.status === "EN_OFICINA" && (!normalizedReceiptCaseSearch || document.case_files.number.toLocaleLowerCase("es-MX").includes(normalizedReceiptCaseSearch)));
   const latestReceiptFor = (documentId) => reportMovements.find((movement) => movement.documents?.id === documentId && movement.receipt_number)?.receipt_number;
@@ -735,13 +738,34 @@ export default function HomePage() {
             <button className="modal-close" onClick={() => setCasePreview(null)} aria-label="Cerrar">×</button>
             <p className="eyebrow">EXPEDIENTE</p>
             <h2>{casePreview}</h2>
-            <p>{casePreviewDocuments.length} documentos relacionados</p>
+            <p>{casePreviewDocuments.length} documentos activos relacionados</p>
+            <div className="case-summary-grid" aria-label="Resumen del expediente">
+              {caseStatusSummary.length === 0 ? <span>Sin documentos activos.</span> : caseStatusSummary.map(([status, label, count]) => (
+                <button key={status} onClick={() => { setCasePreview(null); setStatusFilter(status); setSearch(casePreview); setActiveView("consulta"); }}>
+                  <strong>{count}</strong>
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
             <div className="case-documents">
               {casePreviewDocuments.map((document) => (
                 <article key={document.id} className="case-document-card">
-                  <div><strong>{document.document_types.name}</strong><span>{document.agencies.name}</span></div>
-                  <div className="case-document-status"><b>{formatStatus(document.status)}</b>{latestReceiptFor(document.id) && <span>Boleta: {latestReceiptFor(document.id)}</span>}{isOutsideOffice(document.status) && <span className="time-outside">Fuera: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div>
-                  <div className="case-document-actions"><button onClick={() => { setCasePreview(null); prepareSend(document); }}>Registrar envío</button><button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}>Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>Ver QR</button></div>
+                  <div>
+                    <span>Documento</span>
+                    <strong>{document.document_types.name}</strong>
+                    <small>{document.agencies.name}</small>
+                  </div>
+                  <div className="case-document-status">
+                    <span>Estatus</span>
+                    <b>{formatStatus(document.status)}</b>
+                    {latestReceiptFor(document.id) && <small>Boleta: {latestReceiptFor(document.id)}</small>}
+                  </div>
+                  <div className="case-document-date">
+                    <span>Último movimiento</span>
+                    <strong>{new Date(document.last_movement_at).toLocaleString("es-MX")}</strong>
+                    {isOutsideOffice(document.status) && <small className="time-outside">Fuera: {formatTimeOutside(document.last_movement_at, currentTime)}</small>}
+                  </div>
+                  <div className="case-document-actions"><button onClick={() => { setCasePreview(null); prepareSend(document); }}>Registrar envío</button><button className="secondary" onClick={() => { setCasePreview(null); prepareCorrection(document); }}>Editar</button><button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}>Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>QR</button></div>
                 </article>
               ))}
             </div>
