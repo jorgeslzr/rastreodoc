@@ -391,7 +391,7 @@ export default function HomePage() {
     if (!popup || !qrPreview) return;
 
     const { document, dataUrl } = qrPreview;
-    popup.document.write(`<!doctype html><html><head><title>QR ${escapeHtml(document.case_files.number)}</title><style>body{font-family:Arial;text-align:center;padding:30px}img{width:320px;max-width:100%}h1{font-size:24px;margin:0 0 8px}p{margin:6px}</style></head><body><h1>Expediente ${escapeHtml(document.case_files.number)}</h1><p>${escapeHtml(formatDocumentName(document))}</p><p>${escapeHtml(document.agencies.name)}</p><img src="${dataUrl}" onload="window.print()"><p>RASTREADOC</p></body></html>`);
+    popup.document.write(`<!doctype html><html><head><title>QR ${escapeHtml(document.case_files.number)}</title><style>@page{size:40mm 30mm;margin:0}*{box-sizing:border-box}html,body{width:40mm;height:30mm;margin:0;padding:0}body{font-family:Arial,sans-serif;color:#111}.label{width:40mm;height:30mm;display:grid;grid-template-columns:18mm 1fr;gap:1.5mm;align-items:center;padding:2mm;overflow:hidden}.qr{width:18mm;height:18mm}.info{min-width:0}.brand{font-size:5pt;font-weight:800;letter-spacing:.04em}.case{font-size:8pt;font-weight:800;line-height:1.05;margin:.7mm 0}.text{font-size:5.2pt;line-height:1.08;margin:.6mm 0;word-break:break-word}.agency{font-size:4.8pt}.hint{font-size:4.2pt;margin-top:.8mm}@media screen{body{display:grid;place-items:center;width:100vw;height:100vh;background:#eee}.label{background:white;border:1px solid #ddd;transform:scale(3);transform-origin:center}}@media print{button{display:none}}</style></head><body><section class="label"><img class="qr" src="${dataUrl}" onload="window.print()"><div class="info"><div class="brand">RASTREADOC</div><div class="case">${escapeHtml(document.case_files.number)}</div><div class="text">${escapeHtml(formatDocumentName(document))}</div><div class="text agency">${escapeHtml(document.agencies.name)}</div><div class="hint">Escanear para movimiento</div></div></section></body></html>`);
     popup.document.close();
   }
 
@@ -1012,9 +1012,9 @@ export default function HomePage() {
             <button className="modal-close" onClick={() => setQrPreview(null)} aria-label="Cerrar">×</button>
             <p className="eyebrow">CÓDIGO QR</p>
             <h2>Expediente {qrPreview.document.case_files.number}</h2>
-            <p>{formatDocumentName(qrPreview.document)} · {qrPreview.document.agencies.name}</p>
+            <p>{formatDocumentName(qrPreview.document)} · {qrPreview.document.agencies.name}</p><small>Formato de impresión: etiqueta 40 × 30 mm</small>
             <img src={qrPreview.dataUrl} alt={`QR del expediente ${qrPreview.document.case_files.number}`} />
-            <button onClick={printQr}>Imprimir QR</button>
+            <button onClick={printQr}>Imprimir etiqueta 40 × 30 mm</button>
           </section>
         </div>
       )}
