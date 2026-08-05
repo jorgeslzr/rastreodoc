@@ -41,11 +41,15 @@ create table if not exists public.documents (
   case_file_id uuid not null references public.case_files(id) on delete restrict,
   document_type_id uuid not null references public.document_types(id) on delete restrict,
   agency_id uuid not null references public.agencies(id) on delete restrict,
+  label text,
   status public.document_status not null default 'EN_OFICINA',
   qr_token uuid not null unique default gen_random_uuid(),
   last_movement_at timestamptz not null default now(),
   archived_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint document_label_length check (
+    label is null or length(label) <= 120
+  )
 );
 
 create index if not exists documents_case_file_id_idx on public.documents(case_file_id);
