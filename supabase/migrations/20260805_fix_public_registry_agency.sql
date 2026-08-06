@@ -12,8 +12,10 @@ set agency_id = (
 where agency_id in (
   select id
   from public.agencies
-  where translate(upper(name::text), 'ÁÉÍÓÚÜÑ', 'AEIOUUN') = 'RESISTO PUBLICO'
+  where translate(upper(name::text), 'ÁÉÍÓÚÜÑ', 'AEIOUUN') in ('RESISTO PUBLICO', 'REGISTRO PUBLICO')
+    and name::text <> 'REGISTRO PÚBLICO'
 );
 
 delete from public.agencies
-where translate(upper(name::text), 'ÁÉÍÓÚÜÑ', 'AEIOUUN') = 'RESISTO PUBLICO';
+where translate(upper(name::text), 'ÁÉÍÓÚÜÑ', 'AEIOUUN') in ('RESISTO PUBLICO', 'REGISTRO PUBLICO')
+  and name::text <> 'REGISTRO PÚBLICO';

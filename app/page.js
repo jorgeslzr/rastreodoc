@@ -68,7 +68,11 @@ function buildQrPayload(token) {
 }
 
 function isObsoleteAgencyName(name) {
-  return name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleUpperCase("es-MX") === "RESISTO PUBLICO";
+  const upperName = name.trim().toLocaleUpperCase("es-MX");
+  return upperName.startsWith("RESISTO PUBLICO")
+    || upperName.startsWith("RESISTO PÚBLICO")
+    || upperName.startsWith("REGISTRÓ PUBLICO")
+    || upperName.startsWith("REGISTRÓ PÚBLICO");
 }
 
 function normalizeScannedToken(value) {
@@ -177,7 +181,7 @@ export default function HomePage() {
     ]).then(([caseResult, typeResult, agencyResult, profileResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
-      setAgencies((agencyResult.data ?? []).filter(({ name }) => !isObsoleteAgencyName(name)));
+      setAgencies(agencyResult.data ?? []);
       setProfiles(profileResult.data ?? []);
       const sessionProfile = profileResult.data?.find((profile) => profile.id === session.user.id);
       setCurrentRole(sessionProfile?.role ?? "admin");
@@ -365,6 +369,29 @@ export default function HomePage() {
     collectionSetter((current) => current.some(({ id, name }) => id === record.id || name.toLocaleUpperCase("es-MX") === cleanName) ? current : [...current, record].sort((a, b) => a.name.localeCompare(b.name, "es")));
     setter("");
     setMessage({ type: "success", text: `${successLabel} guardado correctamente.` });
+  }
+
+  async function deleteCatalogItem(table, record, collectionSetter, itemLabel) {
+    const confirmed = window.confirm(`¿Eliminar ${itemLabel.toLocaleLowerCase("es-MX")} "${record.name}"?`);
+    if (!confirmed) return;
+
+    setBusy(true);
+    setMessage(null);
+    const { error } = await supabase.from(table).delete().eq("id", record.id);
+    setBusy(false);
+
+    if (error?.code === "23503") {
+      setMessage({ type: "error", text: `No se puede eliminar ${record.name} porque ya está siendo utilizado por uno o más documentos.` });
+      return;
+    }
+
+    if (error) {
+      setMessage({ type: "error", text: `No fue posible eliminar ${itemLabel.toLocaleLowerCase("es-MX")}.` });
+      return;
+    }
+
+    collectionSetter((current) => current.filter(({ id }) => id !== record.id));
+    setMessage({ type: "success", text: `${itemLabel} eliminado correctamente.` });
   }
 
   async function createDocument(event) {
@@ -998,13 +1025,20 @@ export default function HomePage() {
             <h3>Tipos de documento</h3>
             <label>Nuevo tipo<input value={newDocumentTypeName} onChange={(event) => setNewDocumentTypeName(event.target.value)} placeholder="Ejemplo: PODER" /></label>
             <button type="submit" disabled={busy}>Agregar tipo</button>
-            <div className="catalog-tags">{availableDocumentTypes.map((name) => <span key={name}>{name}</span>)}</div>
+            <div className="catalog-tags">{availableDocumentTypes.map((name) => {
+              const record = documentTypes.find((item) => item.name.toLocaleUpperCase("es-MX") === name.toLocaleUpperCase("es-MX"));
+              const isDefault = DEFAULT_DOCUMENT_TYPES.includes(name.toLocaleUpperCase("es-MX"));
+              return <span key={name}>{name}{record && !isDefault && canManageAll && <button type="button" className="catalog-delete" onClick={() => deleteCatalogItem("document_types", record, setDocumentTypes, "Tipo de documento")} disabled={busy} aria-label={`Eliminar ${name}`}>×</button>}</span>;
+            })}</div>
           </form>
           <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "agencies", newAgencyName, setNewAgencyName, setAgencies, "Dependencia")}>
             <h3>Dependencias</h3>
             <label>Nueva dependencia<input value={newAgencyName} onChange={(event) => setNewAgencyName(event.target.value)} placeholder="Ejemplo: SECRETARÍA" /></label>
             <button type="submit" disabled={busy}>Agregar dependencia</button>
-            <div className="catalog-tags">{availableAgencies.map((name) => <span key={name}>{name}</span>)}</div>
+            <div className="catalog-tags">
+              {agencies.map((record) => <span className={isObsoleteAgencyName(record.name) ? "catalog-invalid" : ""} key={record.id}>{record.name}{canManageAll && <button type="button" className="catalog-delete" onClick={() => deleteCatalogItem("agencies", record, setAgencies, "Dependencia")} disabled={busy} aria-label={`Eliminar ${record.name}`}>×</button>}</span>)}
+              {DEFAULT_AGENCIES.filter((name) => !agencies.some((record) => record.name.toLocaleUpperCase("es-MX") === name.toLocaleUpperCase("es-MX"))).map((name) => <span key={name}>{name}</span>)}
+            </div>
           </form>
         </div>
       </section>}
