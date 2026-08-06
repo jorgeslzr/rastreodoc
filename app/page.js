@@ -67,6 +67,10 @@ function buildQrPayload(token) {
   return `RDOC:${token}`;
 }
 
+function isObsoleteAgencyName(name) {
+  return name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleUpperCase("es-MX") === "RESISTO PUBLICO";
+}
+
 function normalizeScannedToken(value) {
   const cleanValue = value.trim();
   const uuid = cleanValue.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
@@ -173,7 +177,7 @@ export default function HomePage() {
     ]).then(([caseResult, typeResult, agencyResult, profileResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
-      setAgencies(agencyResult.data ?? []);
+      setAgencies((agencyResult.data ?? []).filter(({ name }) => !isObsoleteAgencyName(name)));
       setProfiles(profileResult.data ?? []);
       const sessionProfile = profileResult.data?.find((profile) => profile.id === session.user.id);
       setCurrentRole(sessionProfile?.role ?? "admin");
@@ -342,6 +346,11 @@ export default function HomePage() {
     event.preventDefault();
     const cleanName = value.trim().toLocaleUpperCase("es-MX");
     if (!cleanName) return;
+
+    if (table === "agencies" && isObsoleteAgencyName(cleanName)) {
+      setMessage({ type: "error", text: "Esa dependencia no es válida. Utiliza REGISTRO PÚBLICO." });
+      return;
+    }
 
     setBusy(true);
     setMessage(null);
@@ -781,7 +790,7 @@ export default function HomePage() {
   const canOperate = canManageAll || currentRole === "empleado";
   const canManageUsers = canManageAll;
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
-  const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)])].sort((a, b) => a.localeCompare(b, "es"));
+  const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)].filter((name) => !isObsoleteAgencyName(name)))].sort((a, b) => a.localeCompare(b, "es"));
   const filteredReportMovements = reportMovements.filter((movement) => {
     const movementDate = movement.occurred_at.slice(0, 10);
     const caseNumber = movement.documents?.case_files?.number ?? "";
