@@ -448,11 +448,11 @@ export default function HomePage() {
   }
 
   function buildLabelHtml(document, dataUrl) {
-    return `<section class="label"><img class="qr" src="${dataUrl}"><div class="info"><div class="brand">RASTREADOC</div><div class="case">${escapeHtml(document.case_files.number)}</div><div class="text">${escapeHtml(formatDocumentName(document))}</div><div class="text agency">${escapeHtml(document.agencies.name)}</div><div class="hint">Escanear para movimiento</div></div></section>`;
+    return `<section class="label"><img class="qr" src="${dataUrl}"><div class="info"><div class="case">${escapeHtml(document.case_files.number)}</div><div class="document-type">${escapeHtml(document.document_types.name)}</div></div></section>`;
   }
 
   function labelPrintStyles() {
-    return `@page{size:40mm 30mm;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:Arial,sans-serif;color:#111}.label{width:40mm;height:30mm;display:grid;grid-template-columns:20mm 1fr;gap:1.2mm;align-items:center;padding:1.5mm;overflow:hidden;break-after:page;page-break-after:always}.label:last-child{break-after:auto;page-break-after:auto}.qr{width:20mm;height:20mm}.info{min-width:0}.brand{font-size:5pt;font-weight:800;letter-spacing:.04em}.case{font-size:8pt;font-weight:800;line-height:1.05;margin:.6mm 0}.text{font-size:5pt;line-height:1.05;margin:.5mm 0;word-break:break-word}.agency{font-size:4.6pt}.hint{font-size:4pt;margin-top:.7mm}@media screen{body{display:grid;place-items:center;gap:8px;min-height:100vh;background:#eee}.label{background:white;border:1px solid #ddd;transform:scale(2.5);transform-origin:center;margin:26mm}}@media print{button{display:none}}`;
+    return `@page{size:40mm 30mm;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:Arial,sans-serif;color:#111}.label{width:40mm;height:30mm;display:grid;grid-template-columns:20mm 1fr;gap:1.2mm;align-items:center;padding:1.5mm;overflow:hidden;break-after:page;page-break-after:always}.label:last-child{break-after:auto;page-break-after:auto}.qr{width:20mm;height:20mm}.info{min-width:0;display:flex;flex-direction:column;gap:1.5mm}.case{font-size:8pt;font-weight:800;line-height:1.1;overflow-wrap:anywhere}.document-type{font-size:6pt;font-weight:600;line-height:1.15;overflow-wrap:anywhere}@media screen{body{display:grid;place-items:center;gap:8px;min-height:100vh;background:#eee}.label{background:white;border:1px solid #ddd;transform:scale(2.5);transform-origin:center;margin:26mm}}@media print{button{display:none}}`;
   }
 
   function printQr() {
