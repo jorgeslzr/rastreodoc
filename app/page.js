@@ -18,6 +18,7 @@ const ROLE_LABELS = {
   empleado: "Empleado",
   consulta: "Consulta",
 };
+const REPORT_MOVEMENT_SELECT = "id, status, occurred_at, receipt_number, documents!inner(id, label, archived_at, case_files(number), document_types(name), agencies(name))";
 
 const DOCUMENT_AGENCY_MAP = {
   PREVENTIVO: "REGISTRO PÚBLICO",
@@ -122,6 +123,7 @@ export default function HomePage() {
   const [manualMovementReady, setManualMovementReady] = useState(false);
   const [editPreview, setEditPreview] = useState(null);
   const [correctedStatus, setCorrectedStatus] = useState("");
+  const [correctedDocumentLabel, setCorrectedDocumentLabel] = useState("");
   const [correctionNote, setCorrectionNote] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -177,7 +179,7 @@ export default function HomePage() {
       supabase.from("profiles").select("id, username, role").order("created_at", { ascending: false }),
       supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }),
       supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").not("archived_at", "is", null).order("archived_at", { ascending: false }),
-      supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, label, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false }),
+      supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false }),
     ]).then(([caseResult, typeResult, agencyResult, profileResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
@@ -437,7 +439,7 @@ export default function HomePage() {
     setDocumentLabel("");
     setAgency("");
     setMessage({ type: "success", text: "Documento agregado con estatus LISTO PARA ENVIAR." });
-    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, label, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -448,11 +450,11 @@ export default function HomePage() {
   }
 
   function buildLabelHtml(document, dataUrl) {
-    return `<section class="label"><img class="qr" src="${dataUrl}"><div class="info"><div class="brand">RASTREADOC</div><div class="case">${escapeHtml(document.case_files.number)}</div><div class="text">${escapeHtml(formatDocumentName(document))}</div><div class="text agency">${escapeHtml(document.agencies.name)}</div><div class="hint">Escanear para movimiento</div></div></section>`;
+    return `<section class="label"><img class="qr" src="${dataUrl}"><div class="info"><div class="case">${escapeHtml(document.case_files.number)}</div><div class="document-type">${escapeHtml(document.document_types.name)}</div></div></section>`;
   }
 
   function labelPrintStyles() {
-    return `@page{size:40mm 30mm;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:Arial,sans-serif;color:#111}.label{width:40mm;height:30mm;display:grid;grid-template-columns:20mm 1fr;gap:1.2mm;align-items:center;padding:1.5mm;overflow:hidden;break-after:page;page-break-after:always}.label:last-child{break-after:auto;page-break-after:auto}.qr{width:20mm;height:20mm}.info{min-width:0}.brand{font-size:5pt;font-weight:800;letter-spacing:.04em}.case{font-size:8pt;font-weight:800;line-height:1.05;margin:.6mm 0}.text{font-size:5pt;line-height:1.05;margin:.5mm 0;word-break:break-word}.agency{font-size:4.6pt}.hint{font-size:4pt;margin-top:.7mm}@media screen{body{display:grid;place-items:center;gap:8px;min-height:100vh;background:#eee}.label{background:white;border:1px solid #ddd;transform:scale(2.5);transform-origin:center;margin:26mm}}@media print{button{display:none}}`;
+    return `@page{size:40mm 30mm;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:Arial,sans-serif;color:#111}.label{width:40mm;height:30mm;display:grid;grid-template-columns:20mm 1fr;gap:1.2mm;align-items:center;padding:1.5mm;overflow:hidden;break-after:page;page-break-after:always}.label:last-child{break-after:auto;page-break-after:auto}.qr{width:20mm;height:20mm}.info{height:20mm;min-width:0;display:flex;align-items:center;justify-content:center;gap:1.2mm;overflow:hidden}.case,.document-type{max-height:20mm;writing-mode:vertical-rl;text-orientation:mixed;overflow:hidden}.case{font-size:8pt;font-weight:800;line-height:1.1;white-space:nowrap}.document-type{font-size:6pt;font-weight:600;line-height:1.15;overflow-wrap:anywhere}@media screen{body{display:grid;place-items:center;gap:8px;min-height:100vh;background:#eee}.label{background:white;border:1px solid #ddd;transform:scale(2.5);transform-origin:center;margin:26mm}}@media print{button{display:none}}`;
   }
 
   function printQr() {
@@ -498,6 +500,7 @@ export default function HomePage() {
       .from("documents")
       .select("id, qr_token, label, status, last_movement_at, case_files(number), document_types(name), agencies(name)")
       .eq("qr_token", token)
+      .is("archived_at", null)
       .maybeSingle();
     setBusy(false);
 
@@ -594,7 +597,7 @@ export default function HomePage() {
     if (["ENVIADO", "REENVIADO"].includes(resolvedStatus)) setReceiptNumber("");
     setMessage({ type: "success", text: `Movimiento registrado: ${formatStatus(resolvedStatus)}.` });
     setManualMovementReady(false);
-    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, label, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -638,7 +641,7 @@ export default function HomePage() {
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: resolvedStatus, last_movement_at: new Date().toISOString() } : item));
     setReceiptDrafts((current) => ({ ...current, [document.id]: "" }));
     setMessage({ type: "success", text: `Boleta guardada. Documento marcado como ${formatStatus(resolvedStatus)}.` });
-    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, label, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -672,38 +675,55 @@ export default function HomePage() {
   function prepareCorrection(document) {
     setEditPreview(document);
     setCorrectedStatus(document.status);
+    setCorrectedDocumentLabel(document.label ?? "");
     setCorrectionNote("");
   }
 
   async function saveStatusCorrection(event) {
     event.preventDefault();
     if (!editPreview || !correctedStatus) return;
-    const confirmed = window.confirm(`Estatus actual: ${formatStatus(editPreview.status)}. Nuevo estatus: ${formatStatus(correctedStatus)}. ¿Guardar esta corrección?`);
+    const cleanLabel = correctedDocumentLabel.trim();
+    const statusChanged = correctedStatus !== editPreview.status;
+    const labelChanged = cleanLabel !== (editPreview.label?.trim() ?? "");
+    if (!statusChanged && !labelChanged) {
+      setEditPreview(null);
+      setMessage({ type: "success", text: "No había cambios por guardar." });
+      return;
+    }
+    const confirmed = window.confirm(`¿Guardar los cambios de ${formatDocumentName(editPreview)}?`);
     if (!confirmed) return;
     setBusy(true);
     setMessage(null);
 
-    const note = correctionNote.trim()
-      ? `CORRECCIÓN DE CAPTURA: ${correctionNote.trim()}`
-      : "CORRECCIÓN DE CAPTURA";
-    const { error } = await supabase.from("movements").insert({
-      document_id: editPreview.id,
-      status: correctedStatus,
-      notes: note,
-      created_by: session.user.id,
-    });
+    const { error: labelError } = labelChanged
+      ? await supabase.from("documents").update({ label: cleanLabel || null }).eq("id", editPreview.id)
+      : { error: null };
+
+    let statusError = null;
+    if (!labelError && statusChanged) {
+      const note = correctionNote.trim()
+        ? `CORRECCIÓN DE CAPTURA: ${correctionNote.trim()}`
+        : "CORRECCIÓN DE CAPTURA";
+      const result = await supabase.from("movements").insert({
+        document_id: editPreview.id,
+        status: correctedStatus,
+        notes: note,
+        created_by: session.user.id,
+      });
+      statusError = result.error;
+    }
     setBusy(false);
 
-    if (error) {
-      setMessage({ type: "error", text: "No fue posible corregir el estatus." });
+    if (labelError || statusError) {
+      setMessage({ type: "error", text: "No fue posible guardar todos los cambios del documento." });
       return;
     }
 
-    setDocuments((current) => current.map((document) => document.id === editPreview.id ? { ...document, status: correctedStatus } : document));
-    const { data: refreshedMovements } = await supabase.from("movements").select("id, status, occurred_at, receipt_number, documents(id, label, case_files(number), document_types(name), agencies(name))").order("occurred_at", { ascending: false });
+    setDocuments((current) => current.map((document) => document.id === editPreview.id ? { ...document, status: correctedStatus, label: cleanLabel || null } : document));
+    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
     setReportMovements(refreshedMovements ?? []);
     setEditPreview(null);
-    setMessage({ type: "success", text: `Estatus corregido a ${formatStatus(correctedStatus)}. El movimiento anterior se conservó en el historial.` });
+    setMessage({ type: "success", text: "Cambios del documento guardados correctamente." });
   }
 
   async function archiveDocument(document) {
@@ -722,6 +742,7 @@ export default function HomePage() {
 
     setDocuments((current) => current.filter((item) => item.id !== document.id));
     setArchivedDocuments((current) => [{ ...document, archived_at: archivedAt }, ...current]);
+    setReportMovements((current) => current.filter((movement) => movement.documents?.id !== document.id));
     if (scannedDocument?.id === document.id) setScannedDocument(null);
     setMessage({ type: "success", text: "Documento archivado. Su historial se conservó." });
   }
@@ -739,6 +760,8 @@ export default function HomePage() {
 
     setArchivedDocuments((current) => current.filter((item) => item.id !== document.id));
     setDocuments((current) => [{ ...document, archived_at: null }, ...current]);
+    const { data: restoredMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    setReportMovements(restoredMovements ?? []);
     setMessage({ type: "success", text: "Documento restaurado y disponible nuevamente." });
   }
 
@@ -819,6 +842,7 @@ export default function HomePage() {
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)].filter((name) => !isObsoleteAgencyName(name)))].sort((a, b) => a.localeCompare(b, "es"));
   const filteredReportMovements = reportMovements.filter((movement) => {
+    if (!movement.documents || movement.documents.archived_at) return false;
     const movementDate = movement.occurred_at.slice(0, 10);
     const caseNumber = movement.documents?.case_files?.number ?? "";
     return (!reportStart || movementDate >= reportStart)
@@ -995,7 +1019,7 @@ export default function HomePage() {
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
                 <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{isOutsideOffice(document.status) && <span className="time-outside">Fuera de la oficina: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
-                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar estatus</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
+                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
               </article>
             ))}
           </div>
@@ -1133,17 +1157,18 @@ export default function HomePage() {
         </div>
       )}
       {editPreview && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Corregir estatus del documento">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Editar documento">
           <form className="edit-modal" onSubmit={saveStatusCorrection}>
             <button type="button" className="modal-close" onClick={() => setEditPreview(null)} aria-label="Cerrar">×</button>
             <p className="eyebrow">CORRECCIÓN</p>
-            <h2>Editar estatus</h2>
+            <h2>Editar documento</h2>
             <p>{editPreview.case_files.number} · {formatDocumentName(editPreview)}</p>
             <div className="status-change-preview"><span>Actual</span><strong>{formatStatus(editPreview.status)}</strong><span>Nuevo</span><strong>{formatStatus(correctedStatus)}</strong></div>
+            <label>Identificador para distinguirlo (opcional)<input value={correctedDocumentLabel} onChange={(event) => setCorrectedDocumentLabel(event.target.value)} placeholder="Ejemplo: Original, Copia 1, Segundo certificado" maxLength="120" /></label>
             <label>Estatus correcto<select value={correctedStatus} onChange={(event) => setCorrectedStatus(event.target.value)}>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
             <label>Motivo de la corrección (opcional)<input value={correctionNote} onChange={(event) => setCorrectionNote(event.target.value)} placeholder="Ejemplo: Se seleccionó rechazado por error" /></label>
-            <div className="edit-actions"><button type="button" className="secondary" onClick={() => setEditPreview(null)}>Cancelar</button><button type="submit" disabled={busy}>Guardar corrección</button></div>
-            <small>El movimiento anterior permanecerá en el historial para proteger la información.</small>
+            <div className="edit-actions"><button type="button" className="secondary" onClick={() => setEditPreview(null)}>Cancelar</button><button type="submit" disabled={busy}>Guardar cambios</button></div>
+            <small>Si cambias el estatus, el movimiento anterior permanecerá en el historial.</small>
           </form>
         </div>
       )}
