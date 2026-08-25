@@ -675,6 +675,33 @@ export default function HomePage() {
     setMessage({ type: "success", text: `Boleta guardada. Documento marcado como ${formatStatus(resolvedStatus)}.` });
     const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
     setReportMovements(refreshedMovements ?? []);
+    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
+  }
+
+  async function markRejectedDocumentReady(document) {
+    const confirmed = window.confirm(`¿Marcar ${formatDocumentName(document)} del expediente ${document.case_files.number} como listo para enviar nuevamente?`);
+    if (!confirmed) return;
+    setBusy(true);
+    setMessage(null);
+
+    const { error } = await supabase.from("movements").insert({
+      document_id: document.id,
+      status: "EN_OFICINA",
+      notes: "Documento corregido y listo para reenviar",
+      created_by: session.user.id,
+    });
+    setBusy(false);
+
+    if (error) {
+      setMessage({ type: "error", text: "No fue posible marcar el documento como listo para enviar." });
+      return;
+    }
+
+    const lastMovementAt = new Date().toISOString();
+    setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
+    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    setReportMovements(refreshedMovements ?? []);
+    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
 
   async function markRejectedDocumentReady(document) {
