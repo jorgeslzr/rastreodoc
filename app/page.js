@@ -42,6 +42,10 @@ function formatDocumentName(document) {
   return label ? `${document.document_types.name} — ${label}` : document.document_types.name;
 }
 
+function isIsaiDocument(document) {
+  return document?.document_types?.name?.trim().toLocaleUpperCase("es-MX") === "ISAI";
+}
+
 function formatStatus(status) {
   if (status === "EN_OFICINA") return "LISTO PARA ENVIAR";
   if (status === "REENVIADO") return "REINGRESADO";
@@ -548,7 +552,7 @@ export default function HomePage() {
     setBusy(true);
     setMessage(null);
 
-    if (status === "ENVIADO" && !receiptNumber.trim()) {
+    if (status === "ENVIADO" && !isIsaiDocument(targetDocument) && !receiptNumber.trim()) {
       setBusy(false);
       setMessage({ type: "error", text: "Escribe el número de boleta antes de registrar el envío." });
       return;
@@ -577,7 +581,7 @@ export default function HomePage() {
       status: resolvedStatus,
       rejection_reason: resolvedStatus === "RECHAZADO" ? rejectionReason.trim() || null : null,
       notes: movementNotes.trim() || null,
-      receipt_number: ["ENVIADO", "REENVIADO"].includes(resolvedStatus) ? receiptNumber.trim() : null,
+      receipt_number: ["ENVIADO", "REENVIADO"].includes(resolvedStatus) && !isIsaiDocument(targetDocument) ? receiptNumber.trim() || null : null,
       created_by: session.user.id,
     });
     setBusy(false);
@@ -603,7 +607,7 @@ export default function HomePage() {
 
   async function registerReceiptSend(document) {
     const cleanReceipt = (receiptDrafts[document.id] ?? "").trim();
-    if (!cleanReceipt) {
+    if (!isIsaiDocument(document) && !cleanReceipt) {
       setMessage({ type: "error", text: "Escribe el número de boleta antes de marcar el documento como enviado." });
       return;
     }
@@ -627,8 +631,8 @@ export default function HomePage() {
     const { error } = await supabase.from("movements").insert({
       document_id: document.id,
       status: resolvedStatus,
-      receipt_number: cleanReceipt,
-      notes: "Captura de boleta sin escaneo QR",
+      receipt_number: cleanReceipt || null,
+      notes: isIsaiDocument(document) ? "Envío de ISAI sin número de boleta" : "Captura de boleta sin escaneo QR",
       created_by: session.user.id,
     });
     setBusy(false);
@@ -993,8 +997,8 @@ export default function HomePage() {
           {receiptDocuments.map((document) => (
             <article className="receipt-row" key={document.id}>
               <div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name}</span></div>
-              <label>Número de boleta<input value={receiptDrafts[document.id] ?? ""} onChange={(event) => setReceiptDrafts((current) => ({ ...current, [document.id]: event.target.value }))} placeholder="Ejemplo: B-12345" maxLength="100" /></label>
-              <button onClick={() => registerReceiptSend(document)} disabled={busy}>Marcar ENVIADO</button>
+              {isIsaiDocument(document) ? <span>ISAI no requiere número de boleta.</span> : <label>Número de boleta<input value={receiptDrafts[document.id] ?? ""} onChange={(event) => setReceiptDrafts((current) => ({ ...current, [document.id]: event.target.value }))} placeholder="Ejemplo: B-12345" maxLength="100" /></label>}
+              <button onClick={() => registerReceiptSend(document)} disabled={busy}>{isIsaiDocument(document) ? "Marcar ENVIADO sin boleta" : "Marcar ENVIADO"}</button>
             </article>
           ))}
         </div>}
@@ -1008,7 +1012,7 @@ export default function HomePage() {
         </div>
         <p className="scan-mode-help">{scanMode ? `Modo activo: ${formatStatus(scanMode)}. Cada lectura se guardará automáticamente.` : "Sin modo automático: escanea un documento y después elige la acción."}</p>
         <p className="scan-mode-help">Si eliges ENVIADO y el documento ya tuvo un envío anterior, RASTREADOC lo registrará automáticamente como REINGRESADO.</p>
-        {scanMode === "ENVIADO" && <div className="quick-rejection"><label>Número de boleta<input value={receiptNumber} onChange={(event) => setReceiptNumber(event.target.value)} placeholder="Captura la boleta de este documento" maxLength="100" required /></label><label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
+        {scanMode === "ENVIADO" && <div className="quick-rejection"><label>Número de boleta (excepto ISAI)<input value={receiptNumber} onChange={(event) => setReceiptNumber(event.target.value)} placeholder="Captura la boleta de este documento" maxLength="100" /></label><label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
         {scanMode === "RECHAZADO" && <div className="quick-rejection"><label>Motivo para estos rechazos (opcional)<input value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label><label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
         <form className="scan-form" onSubmit={scanDocument}>
           <input ref={scanInputRef} value={scanToken} onChange={(event) => setScanToken(event.target.value)} placeholder="Escanea el QR aquí" aria-label="Código QR" />
@@ -1025,7 +1029,7 @@ export default function HomePage() {
               {isOutsideOffice(scannedDocument.status) && <div><span>Tiempo fuera</span><strong>{formatTimeOutside(scannedDocument.last_movement_at, currentTime)}</strong></div>}
             </div>
             {!scanMode && <div className="movement-fields">
-              <label>Número de boleta (solo para enviar)<input value={receiptNumber} onChange={(event) => setReceiptNumber(event.target.value)} maxLength="100" /></label>
+              {!isIsaiDocument(scannedDocument) && <label>Número de boleta (solo para enviar)<input value={receiptNumber} onChange={(event) => setReceiptNumber(event.target.value)} maxLength="100" /></label>}
               <label>Motivo del rechazo (opcional)<input value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label>
               <label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label>
             </div>}
