@@ -39,9 +39,20 @@ button:disabled { opacity:.65; cursor:wait; }
 .welcome-card p:not(.eyebrow) { margin:7px 0 0; color:var(--muted); }
 .dashboard-cards { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:28px; }
 .storage-card { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:22px 24px; border:1px solid var(--line); border-radius:14px; background:white; }
+.storage-details { flex:1; min-width:0; }
 .storage-card h3 { margin:0 0 8px; color:var(--navy); }
 .storage-card strong { display:block; color:var(--blue); font-size:30px; }
 .storage-card p:not(.eyebrow) { margin:7px 0 0; color:var(--muted); }
+.storage-meter { height:12px; margin-top:14px; overflow:hidden; border-radius:999px; background:#e3e9ed; }
+.storage-meter span { display:block; height:100%; border-radius:inherit; background:#2b8a5a; transition:width .25s ease; }
+.storage-card.warning { border-color:#d39a24; background:#fffaf0; }
+.storage-card.warning .storage-meter span { background:#d39a24; }
+.storage-card.critical { border-color:#c94747; background:#fff4f4; }
+.storage-card.critical .storage-meter span { background:#c94747; }
+.storage-card .storage-reading b { color:var(--navy); }
+.storage-card .storage-alert { font-weight:700; }
+.storage-card.warning .storage-alert { color:#8a5a00; }
+.storage-card.critical .storage-alert { color:#a42121; }
 .dashboard-card { min-height:94px; padding:14px; border:1px solid var(--line); background:white; color:var(--navy); text-align:left; }
 .dashboard-card:hover,.dashboard-card.active { border-color:var(--blue); background:#e9f3f7; }
 .dashboard-card strong,.dashboard-card span { display:block; }
@@ -208,4 +219,4 @@ button:disabled { opacity:.65; cursor:wait; }
 @media (max-width:1000px) { .dashboard-cards,.main-menu { grid-template-columns:repeat(3,1fr); } .quick-actions,.operation-strip,.receipt-row { grid-template-columns:repeat(2,1fr); } .receipt-row button { grid-column:1/-1; } }
 @media (max-width:900px) { .report-filters { grid-template-columns:repeat(2,1fr); } .case-document-card { grid-template-columns:1fr 1fr; } .case-document-actions { grid-column:1/-1; justify-content:flex-start; } }
 @media (max-width:800px) { .workspace-grid { grid-template-columns:1fr; } }
-@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .panel,.case-modal { padding:23px; } .page-heading,.scanner-heading,.welcome-card,.reports-heading,.archived-heading,.receipt-heading,.users-heading,.documents-heading { align-items:flex-start; } .session-box { width:100%; } .page-heading h1 { font-size:34px; } .main-menu { grid-template-columns:repeat(2,1fr); } .scan-form,.scan-modes,.quick-rejection,.movement-fields,.movement-actions,.document-filters,.report-filters,.case-document-card,.quick-actions,.operation-strip,.receipt-row,.catalogs-grid,.users-grid,.user-list-row { grid-template-columns:1fr; } .document-row,.welcome-card,.reports-heading,.archived-heading,.receipt-heading,.users-heading,.documents-heading,.document-row-main { align-items:flex-start; flex-direction:column; } .row-actions,.document-row button,.welcome-card button,.welcome-actions,.welcome-actions button,.report-actions,.report-actions button,.case-document-actions,.case-document-actions button,.receipt-row button { width:100%; } .dashboard-cards { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .panel,.case-modal { padding:23px; } .page-heading,.scanner-heading,.welcome-card,.storage-card,.reports-heading,.archived-heading,.receipt-heading,.users-heading,.documents-heading { align-items:flex-start; } .session-box { width:100%; } .page-heading h1 { font-size:34px; } .main-menu { grid-template-columns:repeat(2,1fr); } .scan-form,.scan-modes,.quick-rejection,.movement-fields,.movement-actions,.document-filters,.report-filters,.case-document-card,.quick-actions,.operation-strip,.receipt-row,.catalogs-grid,.users-grid,.user-list-row { grid-template-columns:1fr; } .document-row,.welcome-card,.storage-card,.reports-heading,.archived-heading,.receipt-heading,.users-heading,.documents-heading,.document-row-main { align-items:flex-start; flex-direction:column; } .row-actions,.document-row button,.welcome-card button,.storage-card button,.welcome-actions,.welcome-actions button,.report-actions,.report-actions button,.case-document-actions,.case-document-actions button,.receipt-row button { width:100%; } .dashboard-cards { grid-template-columns:repeat(2,1fr); } }

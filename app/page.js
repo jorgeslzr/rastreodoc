@@ -12,6 +12,7 @@ const DEFAULT_AGENCIES = [
   "REGISTRO PÚBLICO", "TESORERÍA MUNICIPAL", "ARCHIVO GENERAL DE NOTARÍAS",
 ];
 const USER_DOMAIN = "usuarios.rastreadoc.mx";
+const DATABASE_STORAGE_LIMIT_BYTES = (Number(process.env.NEXT_PUBLIC_DATABASE_STORAGE_LIMIT_MB) || 500) * 1024 ** 2;
 const ROLE_LABELS = {
   admin: "Administrador",
   supervisor: "Supervisor",
@@ -51,6 +52,12 @@ function formatStorageSize(bytes) {
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function storageLevel(percentage) {
+  if (percentage >= 90) return { className: "critical", message: "Espacio casi agotado. Libera espacio o amplía la capacidad." };
+  if (percentage >= 75) return { className: "warning", message: "El almacenamiento comienza a llenarse. Conviene revisarlo." };
+  return { className: "healthy", message: "El almacenamiento tiene espacio suficiente." };
 }
 
 function formatStatus(status) {
@@ -697,6 +704,32 @@ export default function HomePage() {
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
 
+  async function markRejectedDocumentReady(document) {
+    const confirmed = window.confirm(`¿Marcar ${formatDocumentName(document)} del expediente ${document.case_files.number} como listo para enviar nuevamente?`);
+    if (!confirmed) return;
+    setBusy(true);
+    setMessage(null);
+
+    const { error } = await supabase.from("movements").insert({
+      document_id: document.id,
+      status: "EN_OFICINA",
+      notes: "Documento corregido y listo para reenviar",
+      created_by: session.user.id,
+    });
+    setBusy(false);
+
+    if (error) {
+      setMessage({ type: "error", text: "No fue posible marcar el documento como listo para enviar." });
+      return;
+    }
+
+    const lastMovementAt = new Date().toISOString();
+    setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
+    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    setReportMovements(refreshedMovements ?? []);
+    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
+  }
+
   async function showHistory(document) {
     setBusy(true);
     const { data, error } = await supabase
@@ -920,6 +953,8 @@ export default function HomePage() {
   const normalizedReceiptCaseSearch = receiptCaseSearch.trim().toLocaleLowerCase("es-MX");
   const receiptDocuments = documents.filter((document) => document.status === "EN_OFICINA" && (!normalizedReceiptCaseSearch || document.case_files.number.toLocaleLowerCase("es-MX").includes(normalizedReceiptCaseSearch)));
   const latestReceiptFor = (documentId) => reportMovements.find((movement) => movement.documents?.id === documentId && movement.receipt_number)?.receipt_number;
+  const storagePercentage = storageUsage === null ? 0 : Math.min(100, (storageUsage / DATABASE_STORAGE_LIMIT_BYTES) * 100);
+  const storageStatus = storageLevel(storagePercentage);
   const viewTitles = {
     panel: ["RESUMEN", "Panel principal"],
     alta: ["CAPTURA", "Nuevo expediente"],
@@ -977,8 +1012,8 @@ export default function HomePage() {
             </button>
           ))}
         </section>
-        {currentRole === "admin" && <section className="storage-card" aria-label="Almacenamiento de la base de datos">
-          <div><p className="eyebrow">ALMACENAMIENTO</p><h3>Espacio utilizado por RASTREADOC</h3><strong>{storageError ? "No disponible" : storageUsage === null ? "Consultando…" : formatStorageSize(storageUsage)}</strong><p>Incluye expedientes, documentos, movimientos, usuarios y catálogos guardados en la base de datos.</p></div>
+        {currentRole === "admin" && <section className={`storage-card ${storageStatus.className}`} aria-label="Almacenamiento de la base de datos">
+          <div className="storage-details"><p className="eyebrow">ALMACENAMIENTO</p><h3>Espacio utilizado por RASTREADOC</h3><strong>{storageError ? "No disponible" : storageUsage === null ? "Consultando…" : `${formatStorageSize(storageUsage)} de ${formatStorageSize(DATABASE_STORAGE_LIMIT_BYTES)}`}</strong>{!storageError && storageUsage !== null && <><div className="storage-meter" role="progressbar" aria-label="Porcentaje de almacenamiento utilizado" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(storagePercentage)}><span style={{ width: `${storagePercentage}%` }} /></div><p className="storage-reading"><b>{storagePercentage.toFixed(1)}% utilizado</b> · Quedan aproximadamente {formatStorageSize(Math.max(0, DATABASE_STORAGE_LIMIT_BYTES - storageUsage))}</p><p className="storage-alert">{storageStatus.message}</p></>}<p>Incluye expedientes, documentos, movimientos, usuarios y catálogos. Límite configurado: {formatStorageSize(DATABASE_STORAGE_LIMIT_BYTES)}.</p></div>
           <button className="secondary" onClick={refreshStorageUsage}>Actualizar</button>
         </section>}
       </section>}
