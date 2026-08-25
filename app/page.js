@@ -668,6 +668,7 @@ export default function HomePage() {
     setMessage({ type: "success", text: `Boleta guardada. Documento marcado como ${formatStatus(resolvedStatus)}.` });
     const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
     setReportMovements(refreshedMovements ?? []);
+    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
 
   async function markRejectedDocumentReady(document) {
