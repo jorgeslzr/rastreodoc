@@ -38,6 +38,10 @@ button:disabled { opacity:.65; cursor:wait; }
 .welcome-card h2 { margin:0; color:var(--navy); }
 .welcome-card p:not(.eyebrow) { margin:7px 0 0; color:var(--muted); }
 .dashboard-cards { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:28px; }
+.storage-card { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:22px 24px; border:1px solid var(--line); border-radius:14px; background:white; }
+.storage-card h3 { margin:0 0 8px; color:var(--navy); }
+.storage-card strong { display:block; color:var(--blue); font-size:30px; }
+.storage-card p:not(.eyebrow) { margin:7px 0 0; color:var(--muted); }
 .dashboard-card { min-height:94px; padding:14px; border:1px solid var(--line); background:white; color:var(--navy); text-align:left; }
 .dashboard-card:hover,.dashboard-card.active { border-color:var(--blue); background:#e9f3f7; }
 .dashboard-card strong,.dashboard-card span { display:block; }
