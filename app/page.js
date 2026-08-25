@@ -18,7 +18,7 @@ const ROLE_LABELS = {
   empleado: "Empleado",
   consulta: "Consulta",
 };
-const REPORT_MOVEMENT_SELECT = "id, status, occurred_at, receipt_number, documents!inner(id, label, archived_at, case_files(number), document_types(name), agencies(name))";
+const REPORT_MOVEMENT_SELECT = "id, status, occurred_at, receipt_number, documents!inner(id, label, status, archived_at, case_files(number), document_types(name), agencies(name))";
 
 const DOCUMENT_AGENCY_MAP = {
   PREVENTIVO: "REGISTRO PÚBLICO",
@@ -766,18 +766,18 @@ export default function HomePage() {
   }
 
   function exportReportToExcel() {
-    const headers = ["Fecha", "Expediente", "Documento", "Dependencia", "Movimiento", "Boleta"];
+    const headers = ["Último movimiento", "Expediente", "Documento", "Dependencia", "Estatus actual", "Boleta"];
     const safeCsvCell = (value) => {
       let text = String(value ?? "");
       if (/^[=+\-@]/.test(text)) text = `'${text}`;
       return `"${text.replaceAll('"', '""')}"`;
     };
-    const rows = filteredReportMovements.map((movement) => [
+    const rows = filteredReportDocuments.map((movement) => [
       new Date(movement.occurred_at).toLocaleString("es-MX"),
       movement.documents?.case_files?.number,
       movement.documents ? formatDocumentName(movement.documents) : "",
       movement.documents?.agencies?.name,
-      formatStatus(movement.status),
+      formatStatus(movement.documents?.status),
       movement.receipt_number || "",
     ]);
     const csv = [headers, ...rows].map((row) => row.map(safeCsvCell).join(",")).join("\r\n");
@@ -792,9 +792,9 @@ export default function HomePage() {
   function openPrintableReport(autoPrint) {
     const popup = window.open("", "_blank", "width=1100,height=750");
     if (!popup) return;
-    const rows = filteredReportMovements.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td></tr>`).join("");
+    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td></tr>`).join("");
     const filters = [reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`].filter(Boolean).join(" · ") || "Todos los movimientos";
-    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}@media print{.toolbar{display:none}body{margin:12mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de movimientos — ${escapeHtml(filters)}</p><strong>${filteredReportMovements.length} movimientos</strong></header><table><thead><tr><th>Fecha</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Movimiento</th><th>Boleta</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No hay movimientos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
+    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}@media print{.toolbar{display:none}body{margin:12mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
     popup.document.close();
   }
 
@@ -841,13 +841,21 @@ export default function HomePage() {
   const canManageUsers = canManageAll;
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)].filter((name) => !isObsoleteAgencyName(name)))].sort((a, b) => a.localeCompare(b, "es"));
-  const filteredReportMovements = reportMovements.filter((movement) => {
+  // El reporte es una fotografía de la operación actual: una fila por documento.
+  // Como los movimientos llegan del más reciente al más antiguo, conservamos
+  // únicamente el primero de cada documento para no contar todo su historial.
+  const latestReportDocuments = reportMovements.filter((movement, index, movements) => (
+    movement.documents
+    && !movement.documents.archived_at
+    && movements.findIndex((item) => item.documents?.id === movement.documents.id) === index
+  ));
+  const filteredReportDocuments = latestReportDocuments.filter((movement) => {
     if (!movement.documents || movement.documents.archived_at) return false;
     const movementDate = movement.occurred_at.slice(0, 10);
     const caseNumber = movement.documents?.case_files?.number ?? "";
     return (!reportStart || movementDate >= reportStart)
       && (!reportEnd || movementDate <= reportEnd)
-      && (!reportStatus || movement.status === reportStatus)
+      && (!reportStatus || movement.documents.status === reportStatus)
       && (!reportType || movement.documents?.document_types?.name === reportType)
       && (!reportCase.trim() || caseNumber.toLocaleLowerCase("es-MX").includes(reportCase.trim().toLocaleLowerCase("es-MX")));
   });
@@ -1026,7 +1034,7 @@ export default function HomePage() {
         )}
       </section>}
       {activeView === "reportes" && <section className="reports-section">
-        <div className="reports-heading"><div><p className="eyebrow">MOVIMIENTOS</p><h2>Reporte por fecha y tipo de documento</h2></div><strong>{filteredReportMovements.length} movimientos</strong></div>
+        <div className="reports-heading"><div><p className="eyebrow">DOCUMENTOS ACTUALES</p><h2>Reporte por fecha y tipo de documento</h2></div><strong>{filteredReportDocuments.length} documentos</strong></div>
         <div className="report-actions"><button onClick={() => openPrintableReport(true)}>Imprimir</button><button className="secondary" onClick={exportReportToExcel}>Exportar a Excel</button><button className="secondary" onClick={() => openPrintableReport(false)}>Ver PDF</button></div>
         <div className="report-filters">
           <label>Expediente<input list="report-case-files" value={reportCase} onChange={(event) => setReportCase(event.target.value)} placeholder="Escribe parte del número" /></label>
@@ -1036,9 +1044,9 @@ export default function HomePage() {
           <label>Estatus<select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}><option value="">Todos</option>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
           <label>Tipo de documento<select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">Todos</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
         </div>
-        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Fecha</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Movimiento</th><th>Boleta</th></tr></thead><tbody>
-          {filteredReportMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
-          {filteredReportMovements.length === 0 && <tr><td colSpan="6">No hay movimientos que coincidan con estos filtros.</td></tr>}
+        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>
+          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
+          {filteredReportDocuments.length === 0 && <tr><td colSpan="6">No hay documentos que coincidan con estos filtros.</td></tr>}
         </tbody></table></div>
       </section>}
 
