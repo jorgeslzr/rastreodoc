@@ -589,7 +589,7 @@ export default function HomePage() {
 
     const updated = { ...targetDocument, status: resolvedStatus, last_movement_at: new Date().toISOString() };
     setScannedDocument(updated);
-    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status } : document));
+    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status: resolvedStatus } : document));
     if (!scanMode) {
       setRejectionReason("");
       setMovementNotes("");
@@ -643,6 +643,32 @@ export default function HomePage() {
     setMessage({ type: "success", text: `Boleta guardada. Documento marcado como ${formatStatus(resolvedStatus)}.` });
     const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
     setReportMovements(refreshedMovements ?? []);
+  }
+
+  async function markRejectedDocumentReady(document) {
+    const confirmed = window.confirm(`¿Marcar ${formatDocumentName(document)} del expediente ${document.case_files.number} como listo para enviar nuevamente?`);
+    if (!confirmed) return;
+    setBusy(true);
+    setMessage(null);
+
+    const { error } = await supabase.from("movements").insert({
+      document_id: document.id,
+      status: "EN_OFICINA",
+      notes: "Documento corregido y listo para reenviar",
+      created_by: session.user.id,
+    });
+    setBusy(false);
+
+    if (error) {
+      setMessage({ type: "error", text: "No fue posible marcar el documento como listo para enviar." });
+      return;
+    }
+
+    const lastMovementAt = new Date().toISOString();
+    setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
+    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    setReportMovements(refreshedMovements ?? []);
+    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
 
   async function showHistory(document) {
@@ -1027,7 +1053,7 @@ export default function HomePage() {
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
                 <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{isOutsideOffice(document.status) && <span className="time-outside">Fuera de la oficina: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
-                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
+                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && document.status === "RECHAZADO" && <button onClick={() => markRejectedDocumentReady(document)} disabled={busy}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
               </article>
             ))}
           </div>
@@ -1130,7 +1156,7 @@ export default function HomePage() {
                     <strong>{new Date(document.last_movement_at).toLocaleString("es-MX")}</strong>
                     {isOutsideOffice(document.status) && <small className="time-outside">Fuera: {formatTimeOutside(document.last_movement_at, currentTime)}</small>}
                   </div>
-                  <div className="case-document-actions">{canOperate && <button onClick={() => { setCasePreview(null); prepareSend(document); }}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => { setCasePreview(null); prepareCorrection(document); }}>Editar</button>}<button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}>Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>QR</button></div>
+                  <div className="case-document-actions">{canOperate && document.status === "RECHAZADO" && <button onClick={() => { setCasePreview(null); markRejectedDocumentReady(document); }}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => { setCasePreview(null); prepareSend(document); }}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => { setCasePreview(null); prepareCorrection(document); }}>Editar</button>}<button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}>Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>QR</button></div>
                 </article>
               ))}
             </div>
