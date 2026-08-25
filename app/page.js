@@ -46,6 +46,13 @@ function isIsaiDocument(document) {
   return document?.document_types?.name?.trim().toLocaleUpperCase("es-MX") === "ISAI";
 }
 
+function formatStorageSize(bytes) {
+  if (!Number.isFinite(bytes)) return "No disponible";
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
+
 function formatStatus(status) {
   if (status === "EN_OFICINA") return "LISTO PARA ENVIAR";
   if (status === "REENVIADO") return "REINGRESADO";
@@ -153,6 +160,8 @@ export default function HomePage() {
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState("consulta");
   const [passwordDrafts, setPasswordDrafts] = useState({});
+  const [storageUsage, setStorageUsage] = useState(null);
+  const [storageError, setStorageError] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -195,8 +204,20 @@ export default function HomePage() {
       setDocuments(documentResult.data ?? []);
       setArchivedDocuments(archivedResult.data ?? []);
       setReportMovements(movementResult.data ?? []);
+      if (sessionProfile?.role === "admin") refreshStorageUsage();
     });
   }, [session]);
+
+  async function refreshStorageUsage() {
+    setStorageError(false);
+    const { data, error } = await supabase.rpc("get_database_storage_usage");
+    if (error) {
+      setStorageUsage(null);
+      setStorageError(true);
+      return;
+    }
+    setStorageUsage(Number(data));
+  }
 
   async function signIn(event) {
     event.preventDefault();
@@ -647,6 +668,7 @@ export default function HomePage() {
     setMessage({ type: "success", text: `Boleta guardada. Documento marcado como ${formatStatus(resolvedStatus)}.` });
     const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
     setReportMovements(refreshedMovements ?? []);
+    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
 
   async function markRejectedDocumentReady(document) {
@@ -955,6 +977,10 @@ export default function HomePage() {
             </button>
           ))}
         </section>
+        {currentRole === "admin" && <section className="storage-card" aria-label="Almacenamiento de la base de datos">
+          <div><p className="eyebrow">ALMACENAMIENTO</p><h3>Espacio utilizado por RASTREADOC</h3><strong>{storageError ? "No disponible" : storageUsage === null ? "Consultando…" : formatStorageSize(storageUsage)}</strong><p>Incluye expedientes, documentos, movimientos, usuarios y catálogos guardados en la base de datos.</p></div>
+          <button className="secondary" onClick={refreshStorageUsage}>Actualizar</button>
+        </section>}
       </section>}
       {activeView === "alta" && <>
       <section className="operation-strip" aria-label="Flujo de alta">
