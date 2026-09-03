@@ -644,7 +644,7 @@ export default function HomePage() {
 
     const updated = { ...targetDocument, status: resolvedStatus, last_movement_at: new Date().toISOString() };
     setScannedDocument(updated);
-    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status: resolvedStatus } : document));
+    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status: resolvedStatus, last_movement_at: updated.last_movement_at } : document));
     if (!scanMode) {
       setRejectionReason("");
       setMovementNotes("");
@@ -977,14 +977,18 @@ export default function HomePage() {
   const canManageUsers = canManageAll;
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)].filter((name) => !isObsoleteAgencyName(name)))].sort((a, b) => a.localeCompare(b, "es"));
-  // El reporte es una fotografía de la operación actual: una fila por documento.
-  // Como los movimientos llegan del más reciente al más antiguo, conservamos
-  // únicamente el primero de cada documento para no contar todo su historial.
-  const latestReportDocuments = reportMovements.filter((movement, index, movements) => (
-    movement.documents
-    && !movement.documents.archived_at
-    && movements.findIndex((item) => item.documents?.id === movement.documents.id) === index
-  ));
+  // El reporte y el panel deben partir de la misma lista de documentos actuales.
+  // Usar el historial como fuente hacía que faltaran documentos cuando la consulta
+  // de movimientos alcanzaba el límite de filas de Supabase.
+  const latestReportDocuments = documents.map((document) => {
+    const latestMovement = reportMovements.find((movement) => movement.documents?.id === document.id);
+    return {
+      id: document.id,
+      occurred_at: document.last_movement_at,
+      receipt_number: latestMovement?.receipt_number ?? null,
+      documents: document,
+    };
+  });
   const matchingReportDocuments = latestReportDocuments.filter((movement) => {
     if (!movement.documents || movement.documents.archived_at) return false;
     const movementDate = movement.occurred_at.slice(0, 10);
