@@ -80,6 +80,25 @@ function formatTimeOutside(date, currentTime) {
   return `${days} ${days === 1 ? "día" : "días"}, ${hours} ${hours === 1 ? "hora" : "horas"}`;
 }
 
+function elapsedDays(date, currentTime) {
+  return Math.max(0, Math.floor((currentTime - new Date(date).getTime()) / 86400000));
+}
+
+function statusTimeLabel(status) {
+  if (status === "EN_OFICINA") return "Listo para enviar desde hace";
+  if (status === "RECHAZADO") return "Rechazado desde hace";
+  if (isOutsideOffice(status)) return "Fuera de la oficina";
+  return "En el estatus actual desde hace";
+}
+
+function sortByElapsedTime(items, direction, getDate, currentTime) {
+  if (!direction) return items;
+  const multiplier = direction === "desc" ? -1 : 1;
+  return [...items].sort((first, second) => (
+    elapsedDays(getDate(first), currentTime) - elapsedDays(getDate(second), currentTime)
+  ) * multiplier);
+}
+
 function isOutsideOffice(status) {
   return ["ENVIADO", "REENVIADO"].includes(status);
 }
@@ -147,6 +166,7 @@ export default function HomePage() {
   const [correctionNote, setCorrectionNote] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [searchDaySort, setSearchDaySort] = useState("");
   const [historyPreview, setHistoryPreview] = useState(null);
   const [scanMode, setScanMode] = useState("");
   const [activeView, setActiveView] = useState("panel");
@@ -158,6 +178,7 @@ export default function HomePage() {
   const [reportStart, setReportStart] = useState("");
   const [reportEnd, setReportEnd] = useState("");
   const [reportCase, setReportCase] = useState("");
+  const [reportDaySort, setReportDaySort] = useState("");
   const [casePreview, setCasePreview] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const scanInputRef = useRef(null);
@@ -623,7 +644,7 @@ export default function HomePage() {
 
     const updated = { ...targetDocument, status: resolvedStatus, last_movement_at: new Date().toISOString() };
     setScannedDocument(updated);
-    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status: resolvedStatus } : document));
+    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status: resolvedStatus, last_movement_at: updated.last_movement_at } : document));
     if (!scanMode) {
       setRejectionReason("");
       setMovementNotes("");
@@ -879,7 +900,7 @@ export default function HomePage() {
   }
 
   function exportReportToExcel() {
-    const headers = ["Último movimiento", "Expediente", "Documento", "Dependencia", "Estatus actual", "Boleta"];
+    const headers = ["Último movimiento", "Días en estatus", "Expediente", "Documento", "Dependencia", "Estatus actual", "Boleta"];
     const safeCsvCell = (value) => {
       let text = String(value ?? "");
       if (/^[=+\-@]/.test(text)) text = `'${text}`;
@@ -887,6 +908,7 @@ export default function HomePage() {
     };
     const rows = filteredReportDocuments.map((movement) => [
       new Date(movement.occurred_at).toLocaleString("es-MX"),
+      elapsedDays(movement.occurred_at, currentTime),
       movement.documents?.case_files?.number,
       movement.documents ? formatDocumentName(movement.documents) : "",
       movement.documents?.agencies?.name,
@@ -905,9 +927,9 @@ export default function HomePage() {
   function openPrintableReport(autoPrint) {
     const popup = window.open("", "_blank", "width=1100,height=750");
     if (!popup) return;
-    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td></tr>`).join("");
+    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${elapsedDays(movement.occurred_at, currentTime)}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td></tr>`).join("");
     const filters = [reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`].filter(Boolean).join(" · ") || "Todos los movimientos";
-    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}@media print{.toolbar{display:none}body{margin:12mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
+    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}@media print{.toolbar{display:none}body{margin:12mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
     popup.document.close();
   }
 
@@ -936,7 +958,7 @@ export default function HomePage() {
   }
 
   const normalizedSearch = search.trim().toLocaleLowerCase("es-MX");
-  const filteredDocuments = documents.filter((document) => {
+  const matchingDocuments = documents.filter((document) => {
     const matchesText = !normalizedSearch || [
       document.case_files.number,
       formatDocumentName(document),
@@ -944,6 +966,7 @@ export default function HomePage() {
     ].some((value) => value.toLocaleLowerCase("es-MX").includes(normalizedSearch));
     return matchesText && (!statusFilter || document.status === statusFilter);
   });
+  const filteredDocuments = sortByElapsedTime(matchingDocuments, searchDaySort, (document) => document.last_movement_at, currentTime);
   const statusCards = [
     ["EN_OFICINA", "Listos para enviar"], ["ENVIADO", "Enviados"],
     ["RECHAZADO", "Rechazados"], ["AUTORIZADO", "Autorizados"],
@@ -954,15 +977,19 @@ export default function HomePage() {
   const canManageUsers = canManageAll;
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)].filter((name) => !isObsoleteAgencyName(name)))].sort((a, b) => a.localeCompare(b, "es"));
-  // El reporte es una fotografía de la operación actual: una fila por documento.
-  // Como los movimientos llegan del más reciente al más antiguo, conservamos
-  // únicamente el primero de cada documento para no contar todo su historial.
-  const latestReportDocuments = reportMovements.filter((movement, index, movements) => (
-    movement.documents
-    && !movement.documents.archived_at
-    && movements.findIndex((item) => item.documents?.id === movement.documents.id) === index
-  ));
-  const filteredReportDocuments = latestReportDocuments.filter((movement) => {
+  // El reporte y el panel deben partir de la misma lista de documentos actuales.
+  // Usar el historial como fuente hacía que faltaran documentos cuando la consulta
+  // de movimientos alcanzaba el límite de filas de Supabase.
+  const latestReportDocuments = documents.map((document) => {
+    const latestMovement = reportMovements.find((movement) => movement.documents?.id === document.id);
+    return {
+      id: document.id,
+      occurred_at: document.last_movement_at,
+      receipt_number: latestMovement?.receipt_number ?? null,
+      documents: document,
+    };
+  });
+  const matchingReportDocuments = latestReportDocuments.filter((movement) => {
     if (!movement.documents || movement.documents.archived_at) return false;
     const movementDate = movement.occurred_at.slice(0, 10);
     const caseNumber = movement.documents?.case_files?.number ?? "";
@@ -972,6 +999,7 @@ export default function HomePage() {
       && (!reportType || movement.documents?.document_types?.name === reportType)
       && (!reportCase.trim() || caseNumber.toLocaleLowerCase("es-MX").includes(reportCase.trim().toLocaleLowerCase("es-MX")));
   });
+  const filteredReportDocuments = sortByElapsedTime(matchingReportDocuments, reportDaySort, (movement) => movement.occurred_at, currentTime);
   const casePreviewDocuments = casePreview
     ? documents.filter((document) => document.case_files.number === casePreview)
     : [];
@@ -1140,12 +1168,17 @@ export default function HomePage() {
             <option value="">Todos los estatus</option>
             {statusCards.map(([status, label]) => <option value={status} key={status}>{label}</option>)}
           </select>
+          <select value={searchDaySort} onChange={(event) => setSearchDaySort(event.target.value)} aria-label="Ordenar por días en estatus">
+            <option value="">Orden original</option>
+            <option value="desc">Más días primero</option>
+            <option value="asc">Menos días primero</option>
+          </select>
         </div>
         {filteredDocuments.length === 0 ? <p className="empty-state">No hay documentos que coincidan con la búsqueda.</p> : (
           <div className="documents-list">
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
-                <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{isOutsideOffice(document.status) && <span className="time-outside">Fuera de la oficina: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
+                <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{["EN_OFICINA", "RECHAZADO", "ENVIADO", "REENVIADO"].includes(document.status) && <span className="time-outside">{statusTimeLabel(document.status)}: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
                 <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && document.status === "RECHAZADO" && <button onClick={() => markRejectedDocumentReady(document)} disabled={busy}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
               </article>
             ))}
@@ -1162,10 +1195,11 @@ export default function HomePage() {
           <label>Hasta<input type="date" value={reportEnd} onChange={(event) => setReportEnd(event.target.value)} /></label>
           <label>Estatus<select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}><option value="">Todos</option>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
           <label>Tipo de documento<select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">Todos</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+          <label>Ordenar por días<select value={reportDaySort} onChange={(event) => setReportDaySort(event.target.value)}><option value="">Orden original</option><option value="desc">Más días primero</option><option value="asc">Menos días primero</option></select></label>
         </div>
-        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>
-          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
-          {filteredReportDocuments.length === 0 && <tr><td colSpan="6">No hay documentos que coincidan con estos filtros.</td></tr>}
+        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>
+          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td><strong>{elapsedDays(movement.occurred_at, currentTime)}</strong></td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
+          {filteredReportDocuments.length === 0 && <tr><td colSpan="7">No hay documentos que coincidan con estos filtros.</td></tr>}
         </tbody></table></div>
       </section>}
 
