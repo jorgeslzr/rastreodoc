@@ -145,6 +145,29 @@ create trigger movements_are_immutable
 before update or delete on public.movements
 for each row execute function public.prevent_movement_changes();
 
+create or replace function public.get_database_storage_usage()
+returns bigint
+language plpgsql
+security definer
+stable
+set search_path = ''
+as $$
+begin
+  if not exists (
+    select 1
+    from public.profiles
+    where id = auth.uid() and role = 'admin'
+  ) then
+    raise exception 'Solo los administradores pueden consultar el almacenamiento.';
+  end if;
+
+  return pg_database_size(current_database());
+end;
+$$;
+
+revoke all on function public.get_database_storage_usage() from public;
+grant execute on function public.get_database_storage_usage() to authenticated;
+
 alter table public.profiles enable row level security;
 alter table public.agencies enable row level security;
 alter table public.document_types enable row level security;

@@ -64,3 +64,22 @@ El prototipo Django fue sustituido por la base de la aplicación Next.js y las d
 variables públicas de Supabase ya pueden configurarse en Vercel. El esquema SQL
 inicial está preparado para crear los catálogos, expedientes, documentos e
 historial inmutable en Supabase.
+
+El panel del administrador compara el tamaño real de la base de datos con la
+capacidad configurada en `NEXT_PUBLIC_DATABASE_STORAGE_LIMIT_MB` (500 MB si no
+se define). Este valor debe actualizarse en Vercel cuando cambie el plan o la
+capacidad contratada de Supabase para que el porcentaje y las alertas sean
+correctos.
+
+### Configurar el límite en Vercel
+
+No se debe crear un entorno nuevo con ese nombre. En **Project Settings →
+Environments**, hay que cerrar la ventana **Create Pre-production Environment**,
+abrir las variables del entorno **Production** y agregar una variable con:
+
+- **Name:** `NEXT_PUBLIC_DATABASE_STORAGE_LIMIT_MB`
+- **Value:** la capacidad en MB, por ejemplo `500`
+
+Después se debe guardar y volver a desplegar producción. Si la capacidad es de
+500 MB, no es obligatorio agregar la variable porque ese ya es el valor
+predeterminado de la aplicación.
