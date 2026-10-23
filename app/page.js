@@ -80,6 +80,25 @@ function formatTimeOutside(date, currentTime) {
   return `${days} ${days === 1 ? "día" : "días"}, ${hours} ${hours === 1 ? "hora" : "horas"}`;
 }
 
+function elapsedDays(date, currentTime) {
+  return Math.max(0, Math.floor((currentTime - new Date(date).getTime()) / 86400000));
+}
+
+function statusTimeLabel(status) {
+  if (status === "EN_OFICINA") return "Listo para enviar desde hace";
+  if (status === "RECHAZADO") return "Rechazado desde hace";
+  if (isOutsideOffice(status)) return "Fuera de la oficina";
+  return "En el estatus actual desde hace";
+}
+
+function sortByElapsedTime(items, direction, getDate, currentTime) {
+  if (!direction) return items;
+  const multiplier = direction === "desc" ? -1 : 1;
+  return [...items].sort((first, second) => (
+    elapsedDays(getDate(first), currentTime) - elapsedDays(getDate(second), currentTime)
+  ) * multiplier);
+}
+
 function isOutsideOffice(status) {
   return ["ENVIADO", "REENVIADO"].includes(status);
 }
@@ -147,6 +166,7 @@ export default function HomePage() {
   const [correctionNote, setCorrectionNote] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [searchDaySort, setSearchDaySort] = useState("");
   const [historyPreview, setHistoryPreview] = useState(null);
   const [scanMode, setScanMode] = useState("");
   const [activeView, setActiveView] = useState("panel");
@@ -158,6 +178,7 @@ export default function HomePage() {
   const [reportStart, setReportStart] = useState("");
   const [reportEnd, setReportEnd] = useState("");
   const [reportCase, setReportCase] = useState("");
+  const [reportDaySort, setReportDaySort] = useState("");
   const [casePreview, setCasePreview] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const scanInputRef = useRef(null);
@@ -838,6 +859,7 @@ export default function HomePage() {
     };
     const rows = filteredReportDocuments.map((movement) => [
       new Date(movement.occurred_at).toLocaleString("es-MX"),
+      elapsedDays(movement.occurred_at, currentTime),
       movement.documents?.case_files?.number,
       movement.documents ? formatDocumentName(movement.documents) : "",
       movement.documents?.agencies?.name,
@@ -891,7 +913,7 @@ export default function HomePage() {
   }
 
   const normalizedSearch = search.trim().toLocaleLowerCase("es-MX");
-  const filteredDocuments = documents.filter((document) => {
+  const matchingDocuments = documents.filter((document) => {
     const matchesText = !normalizedSearch || [
       document.case_files.number,
       formatDocumentName(document),
@@ -899,6 +921,7 @@ export default function HomePage() {
     ].some((value) => value.toLocaleLowerCase("es-MX").includes(normalizedSearch));
     return matchesText && (!statusFilter || document.status === statusFilter);
   });
+  const filteredDocuments = sortByElapsedTime(matchingDocuments, searchDaySort, (document) => document.last_movement_at, currentTime);
   const statusCards = [
     ["EN_OFICINA", "Listos para enviar"], ["ENVIADO", "Enviados"],
     ["RECHAZADO", "Rechazados"], ["AUTORIZADO", "Autorizados"],
@@ -927,6 +950,7 @@ export default function HomePage() {
       && (!reportType || movement.documents?.document_types?.name === reportType)
       && (!reportCase.trim() || caseNumber.toLocaleLowerCase("es-MX").includes(reportCase.trim().toLocaleLowerCase("es-MX")));
   });
+  const filteredReportDocuments = sortByElapsedTime(matchingReportDocuments, reportDaySort, (movement) => movement.occurred_at, currentTime);
   const casePreviewDocuments = casePreview
     ? documents.filter((document) => document.case_files.number === casePreview)
     : [];
@@ -1095,6 +1119,11 @@ export default function HomePage() {
             <option value="">Todos los estatus</option>
             {statusCards.map(([status, label]) => <option value={status} key={status}>{label}</option>)}
           </select>
+          <select value={searchDaySort} onChange={(event) => setSearchDaySort(event.target.value)} aria-label="Ordenar por días en estatus">
+            <option value="">Orden original</option>
+            <option value="desc">Más días primero</option>
+            <option value="asc">Menos días primero</option>
+          </select>
         </div>
         {filteredDocuments.length === 0 ? <p className="empty-state">No hay documentos que coincidan con la búsqueda.</p> : (
           <div className="documents-list">
@@ -1117,6 +1146,7 @@ export default function HomePage() {
           <label>Hasta<input type="date" value={reportEnd} onChange={(event) => setReportEnd(event.target.value)} /></label>
           <label>Estatus<select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}><option value="">Todos</option>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
           <label>Tipo de documento<select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">Todos</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+          <label>Ordenar por días<select value={reportDaySort} onChange={(event) => setReportDaySort(event.target.value)}><option value="">Orden original</option><option value="desc">Más días primero</option><option value="asc">Menos días primero</option></select></label>
         </div>
         <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>
           {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
