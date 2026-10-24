@@ -12,6 +12,7 @@ const DEFAULT_AGENCIES = [
   "REGISTRO PÚBLICO", "TESORERÍA MUNICIPAL", "ARCHIVO GENERAL DE NOTARÍAS", "INFONAVIT",
 ];
 const USER_DOMAIN = "usuarios.rastreadoc.mx";
+const SUPABASE_PAGE_SIZE = 1000;
 const DATABASE_STORAGE_LIMIT_BYTES = (Number(process.env.NEXT_PUBLIC_DATABASE_STORAGE_LIMIT_MB) || 500) * 1024 ** 2;
 const ROLE_LABELS = {
   admin: "Administrador",
@@ -34,6 +35,19 @@ const DOCUMENT_AGENCY_MAP = {
   "FIRMA CANCELACION INFONAVIT": "INFONAVIT",
   "FIRMA CANCELACIÓN INFONAVIT": "INFONAVIT",
 };
+
+async function fetchAllPages(buildQuery) {
+  const rows = [];
+
+  for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
+    const { data, error } = await buildQuery(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < SUPABASE_PAGE_SIZE) return { data: rows, error: null };
+  }
+}
 
 function usernameToEmail(username) {
   const cleanUsername = username.trim().toLocaleLowerCase("es-MX").replace(/\s+/g, "_");
@@ -220,12 +234,12 @@ export default function HomePage() {
     if (!session) return;
 
     Promise.all([
-      supabase.from("case_files").select("id, number").order("created_at", { ascending: false }),
+      fetchAllPages((from, to) => supabase.from("case_files").select("id, number").order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
       supabase.from("document_types").select("id, name").order("name"),
       supabase.from("agencies").select("id, name").order("name"),
       supabase.from("profiles").select("id, username, role").order("created_at", { ascending: false }),
-      supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }),
-      supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").not("archived_at", "is", null).order("archived_at", { ascending: false }),
+      fetchAllPages((from, to) => supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
+      fetchAllPages((from, to) => supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").not("archived_at", "is", null).order("archived_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
       supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false }),
     ]).then(([caseResult, typeResult, agencyResult, profileResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
