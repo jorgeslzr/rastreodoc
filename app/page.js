@@ -21,6 +21,7 @@ const ROLE_LABELS = {
   consulta: "Consulta",
 };
 const DOCUMENT_SELECT = "id, qr_token, label, lawyer_id, folio_forma, municipality, cadastral_file_number, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)";
+const LEGACY_DOCUMENT_SELECT = "id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)";
 const REPORT_MOVEMENT_SELECT = "id, status, occurred_at, receipt_number, documents!inner(id, label, status, archived_at, case_files(number), document_types(name), agencies(name))";
 
 const DOCUMENT_AGENCY_MAP = {
@@ -59,6 +60,39 @@ function fetchReportMovements() {
     .order("occurred_at", { ascending: false })
     .order("id", { ascending: false })
     .range(from, to));
+}
+
+async function fetchDocuments(archived = false) {
+  const buildQuery = (select, from, to) => {
+    const query = supabase
+      .from("documents")
+      .select(select)
+      [archived ? "not" : "is"]("archived_at", "is", null)
+      .order(archived ? "archived_at" : "created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
+    return query;
+  };
+
+  const result = await fetchAllPages((from, to) => buildQuery(DOCUMENT_SELECT, from, to));
+  if (!result.error) return result;
+
+  // Keep existing records visible while PostgREST refreshes its schema cache or
+  // when the optional deed/catalog migration has not reached this environment.
+  // New fields remain empty, but a missing column must never blank the dashboard.
+  const fallback = await fetchAllPages((from, to) => buildQuery(LEGACY_DOCUMENT_SELECT, from, to));
+  if (fallback.error) return fallback;
+
+  return {
+    data: fallback.data.map((document) => ({
+      ...document,
+      lawyer_id: null,
+      folio_forma: null,
+      municipality: null,
+      cadastral_file_number: null,
+    })),
+    error: null,
+  };
 }
 
 function usernameToEmail(username) {
@@ -264,8 +298,8 @@ export default function HomePage() {
       supabase.from("lawyers").select("id, name").order("name"),
       supabase.from("municipalities").select("id, name").order("name"),
       supabase.from("profiles").select("id, username, role").order("created_at", { ascending: false }),
-      fetchAllPages((from, to) => supabase.from("documents").select(DOCUMENT_SELECT).is("archived_at", null).order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
-      fetchAllPages((from, to) => supabase.from("documents").select(DOCUMENT_SELECT).not("archived_at", "is", null).order("archived_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
+      fetchDocuments(),
+      fetchDocuments(true),
       fetchReportMovements(),
     ]).then(([caseResult, typeResult, agencyResult, lawyerResult, municipalityResult, profileResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
