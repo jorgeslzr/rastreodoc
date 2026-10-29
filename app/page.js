@@ -49,6 +49,17 @@ async function fetchAllPages(buildQuery) {
   }
 }
 
+function fetchReportMovements() {
+  return fetchAllPages((from, to) => supabase
+    .from("movements")
+    .select(REPORT_MOVEMENT_SELECT)
+    .not("receipt_number", "is", null)
+    .is("documents.archived_at", null)
+    .order("occurred_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to));
+}
+
 function usernameToEmail(username) {
   const cleanUsername = username.trim().toLocaleLowerCase("es-MX").replace(/\s+/g, "_");
   return cleanUsername.includes("@") ? cleanUsername : `${cleanUsername}@${USER_DOMAIN}`;
@@ -240,7 +251,7 @@ export default function HomePage() {
       supabase.from("profiles").select("id, username, role").order("created_at", { ascending: false }),
       fetchAllPages((from, to) => supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
       fetchAllPages((from, to) => supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").not("archived_at", "is", null).order("archived_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
-      supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false }),
+      fetchReportMovements(),
     ]).then(([caseResult, typeResult, agencyResult, profileResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
@@ -512,7 +523,7 @@ export default function HomePage() {
     setDocumentLabel("");
     setAgency("");
     setMessage({ type: "success", text: "Documento agregado con estatus LISTO PARA ENVIAR." });
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -670,7 +681,7 @@ export default function HomePage() {
     if (["ENVIADO", "REENVIADO"].includes(resolvedStatus)) setReceiptNumber("");
     setMessage({ type: "success", text: `Movimiento registrado: ${formatStatus(resolvedStatus)}.` });
     setManualMovementReady(false);
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -714,7 +725,7 @@ export default function HomePage() {
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: resolvedStatus, last_movement_at: new Date().toISOString() } : item));
     setReceiptDrafts((current) => ({ ...current, [document.id]: "" }));
     setMessage({ type: "success", text: `Boleta guardada. Documento marcado como ${formatStatus(resolvedStatus)}.` });
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -740,7 +751,7 @@ export default function HomePage() {
 
     const lastMovementAt = new Date().toISOString();
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -766,7 +777,33 @@ export default function HomePage() {
 
     const lastMovementAt = new Date().toISOString();
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
+    setReportMovements(refreshedMovements ?? []);
+    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
+  }
+
+  async function markRejectedDocumentReady(document) {
+    const confirmed = window.confirm(`¿Marcar ${formatDocumentName(document)} del expediente ${document.case_files.number} como listo para enviar nuevamente?`);
+    if (!confirmed) return;
+    setBusy(true);
+    setMessage(null);
+
+    const { error } = await supabase.from("movements").insert({
+      document_id: document.id,
+      status: "EN_OFICINA",
+      notes: "Documento corregido y listo para reenviar",
+      created_by: session.user.id,
+    });
+    setBusy(false);
+
+    if (error) {
+      setMessage({ type: "error", text: "No fue posible marcar el documento como listo para enviar." });
+      return;
+    }
+
+    const lastMovementAt = new Date().toISOString();
+    setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -846,7 +883,7 @@ export default function HomePage() {
     }
 
     setDocuments((current) => current.map((document) => document.id === editPreview.id ? { ...document, status: correctedStatus, label: cleanLabel || null } : document));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setEditPreview(null);
     setMessage({ type: "success", text: "Cambios del documento guardados correctamente." });
@@ -886,13 +923,13 @@ export default function HomePage() {
 
     setArchivedDocuments((current) => current.filter((item) => item.id !== document.id));
     setDocuments((current) => [{ ...document, archived_at: null }, ...current]);
-    const { data: restoredMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: restoredMovements } = await fetchReportMovements();
     setReportMovements(restoredMovements ?? []);
     setMessage({ type: "success", text: "Documento restaurado y disponible nuevamente." });
   }
 
   function exportReportToExcel() {
-    const headers = ["Último movimiento", "Días en estatus", "Expediente", "Documento", "Dependencia", "Estatus actual", "Boleta"];
+    const headers = ["Último movimiento", "Días en estatus", "Expediente", "Documento", "Dependencia", "Estatus actual", "Número de boleta"];
     const safeCsvCell = (value) => {
       let text = String(value ?? "");
       if (/^[=+\-@]/.test(text)) text = `'${text}`;
@@ -921,7 +958,7 @@ export default function HomePage() {
     if (!popup) return;
     const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${elapsedDays(movement.occurred_at, currentTime)}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td></tr>`).join("");
     const filters = [reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`].filter(Boolean).join(" · ") || "Todos los movimientos";
-    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}@media print{.toolbar{display:none}body{margin:12mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
+    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}@media print{.toolbar{display:none}body{margin:12mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
     popup.document.close();
   }
 
@@ -1194,7 +1231,7 @@ export default function HomePage() {
           <label>Tipo de documento<select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">Todos</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
           <label>Ordenar por días<select value={reportDaySort} onChange={(event) => setReportDaySort(event.target.value)}><option value="">Orden original</option><option value="desc">Más días primero</option><option value="asc">Menos días primero</option></select></label>
         </div>
-        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>
+        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th></tr></thead><tbody>
           {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td><strong>{elapsedDays(movement.occurred_at, currentTime)}</strong></td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
           {filteredReportDocuments.length === 0 && <tr><td colSpan="7">No hay documentos que coincidan con estos filtros.</td></tr>}
         </tbody></table></div>
