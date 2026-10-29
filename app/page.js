@@ -12,6 +12,7 @@ const DEFAULT_AGENCIES = [
   "REGISTRO PÚBLICO", "TESORERÍA MUNICIPAL", "ARCHIVO GENERAL DE NOTARÍAS", "INFONAVIT",
 ];
 const USER_DOMAIN = "usuarios.rastreadoc.mx";
+const SUPABASE_PAGE_SIZE = 1000;
 const DATABASE_STORAGE_LIMIT_BYTES = (Number(process.env.NEXT_PUBLIC_DATABASE_STORAGE_LIMIT_MB) || 500) * 1024 ** 2;
 const ROLE_LABELS = {
   admin: "Administrador",
@@ -19,6 +20,8 @@ const ROLE_LABELS = {
   empleado: "Empleado",
   consulta: "Consulta",
 };
+const DOCUMENT_SELECT = "id, qr_token, label, lawyer_id, folio_forma, municipality, cadastral_file_number, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)";
+const LEGACY_DOCUMENT_SELECT = "id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)";
 const REPORT_MOVEMENT_SELECT = "id, status, occurred_at, receipt_number, documents!inner(id, label, status, archived_at, case_files(number), document_types(name), agencies(name))";
 
 const DOCUMENT_AGENCY_MAP = {
@@ -35,6 +38,70 @@ const DOCUMENT_AGENCY_MAP = {
   "FIRMA CANCELACIÓN INFONAVIT": "INFONAVIT",
 };
 
+async function fetchAllPages(buildQuery) {
+  const rows = [];
+
+  for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
+    const { data, error } = await buildQuery(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < SUPABASE_PAGE_SIZE) return { data: rows, error: null };
+  }
+}
+
+function fetchReportMovements() {
+  return fetchAllPages((from, to) => supabase
+    .from("movements")
+    .select(REPORT_MOVEMENT_SELECT)
+    .not("receipt_number", "is", null)
+    .is("documents.archived_at", null)
+    .order("occurred_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to));
+}
+
+async function fetchDocuments(archived = false) {
+  const buildQuery = (select, from, to) => {
+    let query = supabase
+      .from("documents")
+      .select(select);
+
+    // Supabase's filters do not share the same signature: `is` receives two
+    // arguments while `not` receives three. Keep the calls explicit so active
+    // documents use `archived_at=is.null`, not the invalid `is.is` filter.
+    query = archived
+      ? query.not("archived_at", "is", null)
+      : query.is("archived_at", null);
+
+    return query
+      .order(archived ? "archived_at" : "created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
+  };
+
+  const result = await fetchAllPages((from, to) => buildQuery(DOCUMENT_SELECT, from, to));
+  if (!result.error) return result;
+
+  // Keep existing records visible while PostgREST refreshes its schema cache or
+  // when the optional deed/catalog migration has not reached this environment.
+  // New fields remain empty, but a missing column must never blank the dashboard.
+  const fallback = await fetchAllPages((from, to) => buildQuery(LEGACY_DOCUMENT_SELECT, from, to));
+  if (fallback.error) return fallback;
+
+  return {
+    data: fallback.data.map((document) => ({
+      ...document,
+      lawyer_id: null,
+      folio_forma: null,
+      municipality: null,
+      cadastral_file_number: null,
+    })),
+    error: null,
+  };
+}
+
 function usernameToEmail(username) {
   const cleanUsername = username.trim().toLocaleLowerCase("es-MX").replace(/\s+/g, "_");
   return cleanUsername.includes("@") ? cleanUsername : `${cleanUsername}@${USER_DOMAIN}`;
@@ -47,6 +114,10 @@ function formatDocumentName(document) {
 
 function isIsaiDocument(document) {
   return document?.document_types?.name?.trim().toLocaleUpperCase("es-MX") === "ISAI";
+}
+
+function isDeedType(typeName) {
+  return typeName?.trim().toLocaleUpperCase("es-MX") === "ESCRITURA";
 }
 
 function formatStorageSize(bytes) {
@@ -78,6 +149,25 @@ function formatTimeOutside(date, currentTime) {
   const hours = totalHours % 24;
   if (days === 0) return `${hours} ${hours === 1 ? "hora" : "horas"}`;
   return `${days} ${days === 1 ? "día" : "días"}, ${hours} ${hours === 1 ? "hora" : "horas"}`;
+}
+
+function elapsedDays(date, currentTime) {
+  return Math.max(0, Math.floor((currentTime - new Date(date).getTime()) / 86400000));
+}
+
+function statusTimeLabel(status) {
+  if (status === "EN_OFICINA") return "Listo para enviar desde hace";
+  if (status === "RECHAZADO") return "Rechazado desde hace";
+  if (isOutsideOffice(status)) return "Fuera de la oficina";
+  return "En el estatus actual desde hace";
+}
+
+function sortByElapsedTime(items, direction, getDate, currentTime) {
+  if (!direction) return items;
+  const multiplier = direction === "desc" ? -1 : 1;
+  return [...items].sort((first, second) => (
+    elapsedDays(getDate(first), currentTime) - elapsedDays(getDate(second), currentTime)
+  ) * multiplier);
 }
 
 function isOutsideOffice(status) {
@@ -126,11 +216,19 @@ export default function HomePage() {
   const [caseSearch, setCaseSearch] = useState("");
   const [documentType, setDocumentType] = useState("");
   const [documentLabel, setDocumentLabel] = useState("");
+  const [folioForma, setFolioForma] = useState("");
+  const [municipality, setMunicipality] = useState("");
+  const [cadastralFileNumber, setCadastralFileNumber] = useState("");
+  const [lawyerId, setLawyerId] = useState("");
   const [agency, setAgency] = useState("");
   const [documentTypes, setDocumentTypes] = useState([]);
   const [agencies, setAgencies] = useState([]);
+  const [lawyers, setLawyers] = useState([]);
+  const [municipalities, setMunicipalities] = useState([]);
   const [newDocumentTypeName, setNewDocumentTypeName] = useState("");
   const [newAgencyName, setNewAgencyName] = useState("");
+  const [newLawyerName, setNewLawyerName] = useState("");
+  const [newMunicipalityName, setNewMunicipalityName] = useState("");
   const [documents, setDocuments] = useState([]);
   const [archivedDocuments, setArchivedDocuments] = useState([]);
   const [qrPreview, setQrPreview] = useState(null);
@@ -147,6 +245,7 @@ export default function HomePage() {
   const [correctionNote, setCorrectionNote] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [searchDaySort, setSearchDaySort] = useState("");
   const [historyPreview, setHistoryPreview] = useState(null);
   const [scanMode, setScanMode] = useState("");
   const [activeView, setActiveView] = useState("panel");
@@ -158,6 +257,7 @@ export default function HomePage() {
   const [reportStart, setReportStart] = useState("");
   const [reportEnd, setReportEnd] = useState("");
   const [reportCase, setReportCase] = useState("");
+  const [reportDaySort, setReportDaySort] = useState("");
   const [casePreview, setCasePreview] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const scanInputRef = useRef(null);
@@ -195,24 +295,36 @@ export default function HomePage() {
     if (!session) return;
 
     Promise.all([
-      supabase.from("case_files").select("id, number").order("created_at", { ascending: false }),
+      fetchAllPages((from, to) => supabase.from("case_files").select("id, number").order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
       supabase.from("document_types").select("id, name").order("name"),
       supabase.from("agencies").select("id, name").order("name"),
+      supabase.from("lawyers").select("id, name").order("name"),
+      supabase.from("municipalities").select("id, name").order("name"),
       supabase.from("profiles").select("id, username, role").order("created_at", { ascending: false }),
-      supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }),
-      supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").not("archived_at", "is", null).order("archived_at", { ascending: false }),
-      supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false }),
-    ]).then(([caseResult, typeResult, agencyResult, profileResult, documentResult, archivedResult, movementResult]) => {
+      fetchDocuments(),
+      fetchDocuments(true),
+      fetchReportMovements(),
+    ]).then(([caseResult, typeResult, agencyResult, lawyerResult, municipalityResult, profileResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
       setAgencies(agencyResult.data ?? []);
+      const loadedLawyers = lawyerResult.data ?? [];
+      const lawyersById = new Map(loadedLawyers.map((lawyer) => [lawyer.id, lawyer]));
+      const attachLawyer = (document) => ({
+        ...document,
+        lawyers: lawyersById.get(document.lawyer_id) ?? null,
+      });
+      setLawyers(loadedLawyers);
+      setMunicipalities(municipalityResult.data ?? []);
       setProfiles(profileResult.data ?? []);
       const sessionProfile = profileResult.data?.find((profile) => profile.id === session.user.id);
       setCurrentRole(sessionProfile?.role ?? "admin");
       setCurrentUsername(sessionProfile?.username ?? session.user.email?.split("@")[0] ?? "usuario");
-      setDocuments(documentResult.data ?? []);
-      setArchivedDocuments(archivedResult.data ?? []);
+      setDocuments((documentResult.data ?? []).map(attachLawyer));
+      setArchivedDocuments((archivedResult.data ?? []).map(attachLawyer));
       setReportMovements(movementResult.data ?? []);
+      const loadError = documentResult.error ?? archivedResult.error ?? caseResult.error;
+      if (loadError) setMessage({ type: "error", text: "No fue posible cargar toda la información. Recarga la página; si continúa, revisa que las migraciones estén aplicadas." });
       if (sessionProfile?.role === "admin") refreshStorageUsage();
     });
   }, [session]);
@@ -380,6 +492,11 @@ export default function HomePage() {
     const mappedAgency = DOCUMENT_AGENCY_MAP[nextType.toLocaleUpperCase("es-MX")];
     if (mappedAgency) setAgency(mappedAgency);
     if (!nextType || nextType === "OTROS") setAgency("");
+    if (!isDeedType(nextType)) {
+      setFolioForma("");
+      setMunicipality("");
+      setCadastralFileNumber("");
+    }
   }
 
   async function addCatalogItem(event, table, value, setter, collectionSetter, successLabel) {
@@ -437,7 +554,7 @@ export default function HomePage() {
       setMessage({ type: "error", text: "Selecciona un expediente existente de la búsqueda." });
       return;
     }
-    if (!documentType.trim() || !agency.trim()) return;
+    if (!documentType.trim() || !agency.trim() || !lawyerId) return;
 
     setBusy(true);
     setMessage(null);
@@ -456,9 +573,13 @@ export default function HomePage() {
       case_file_id: selectedCase.id,
       document_type_id: typeRecord.id,
       agency_id: agencyRecord.id,
+      lawyer_id: lawyerId,
       label: documentLabel.trim() || null,
+      folio_forma: isDeedType(documentType) ? folioForma.trim() : null,
+      municipality: isDeedType(documentType) ? municipality.trim() : null,
+      cadastral_file_number: isDeedType(documentType) ? cadastralFileNumber.trim() : null,
       status: "EN_OFICINA",
-    }).select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").single();
+    }).select(DOCUMENT_SELECT).single();
     setBusy(false);
 
     if (error) {
@@ -468,12 +589,17 @@ export default function HomePage() {
 
     setDocumentTypes((current) => current.some(({ id }) => id === typeRecord.id) ? current : [...current, typeRecord]);
     setAgencies((current) => current.some(({ id }) => id === agencyRecord.id) ? current : [...current, agencyRecord]);
-    setDocuments((current) => [data, ...current]);
+    const selectedLawyer = lawyers.find((lawyer) => lawyer.id === lawyerId) ?? null;
+    setDocuments((current) => [{ ...data, lawyers: selectedLawyer }, ...current]);
     setDocumentType("");
     setDocumentLabel("");
+    setFolioForma("");
+    setMunicipality("");
+    setCadastralFileNumber("");
     setAgency("");
+    setLawyerId("");
     setMessage({ type: "success", text: "Documento agregado con estatus LISTO PARA ENVIAR." });
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -532,7 +658,7 @@ export default function HomePage() {
     setMessage(null);
     const { data, error } = await supabase
       .from("documents")
-      .select("id, qr_token, label, status, last_movement_at, case_files(number), document_types(name), agencies(name)")
+      .select(DOCUMENT_SELECT)
       .eq("qr_token", token)
       .is("archived_at", null)
       .maybeSingle();
@@ -623,7 +749,7 @@ export default function HomePage() {
 
     const updated = { ...targetDocument, status: resolvedStatus, last_movement_at: new Date().toISOString() };
     setScannedDocument(updated);
-    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status: resolvedStatus } : document));
+    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status: resolvedStatus, last_movement_at: updated.last_movement_at } : document));
     if (!scanMode) {
       setRejectionReason("");
       setMovementNotes("");
@@ -631,7 +757,7 @@ export default function HomePage() {
     if (["ENVIADO", "REENVIADO"].includes(resolvedStatus)) setReceiptNumber("");
     setMessage({ type: "success", text: `Movimiento registrado: ${formatStatus(resolvedStatus)}.` });
     setManualMovementReady(false);
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -675,7 +801,7 @@ export default function HomePage() {
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: resolvedStatus, last_movement_at: new Date().toISOString() } : item));
     setReceiptDrafts((current) => ({ ...current, [document.id]: "" }));
     setMessage({ type: "success", text: `Boleta guardada. Documento marcado como ${formatStatus(resolvedStatus)}.` });
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -701,7 +827,7 @@ export default function HomePage() {
 
     const lastMovementAt = new Date().toISOString();
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -727,7 +853,7 @@ export default function HomePage() {
 
     const lastMovementAt = new Date().toISOString();
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -753,7 +879,7 @@ export default function HomePage() {
 
     const lastMovementAt = new Date().toISOString();
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -833,7 +959,7 @@ export default function HomePage() {
     }
 
     setDocuments((current) => current.map((document) => document.id === editPreview.id ? { ...document, status: correctedStatus, label: cleanLabel || null } : document));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setEditPreview(null);
     setMessage({ type: "success", text: "Cambios del documento guardados correctamente." });
@@ -873,13 +999,13 @@ export default function HomePage() {
 
     setArchivedDocuments((current) => current.filter((item) => item.id !== document.id));
     setDocuments((current) => [{ ...document, archived_at: null }, ...current]);
-    const { data: restoredMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: restoredMovements } = await fetchReportMovements();
     setReportMovements(restoredMovements ?? []);
     setMessage({ type: "success", text: "Documento restaurado y disponible nuevamente." });
   }
 
   function exportReportToExcel() {
-    const headers = ["Último movimiento", "Expediente", "Documento", "Dependencia", "Estatus actual", "Boleta"];
+    const headers = ["Último movimiento", "Días en estatus", "Expediente", "Documento", "Folio forma", "Municipio", "No. de Exp. Catastral", "Abogado", "Dependencia", "Estatus actual", "Número de boleta", "Quién recibe", "Firma"];
     const safeCsvCell = (value) => {
       let text = String(value ?? "");
       if (/^[=+\-@]/.test(text)) text = `'${text}`;
@@ -887,11 +1013,18 @@ export default function HomePage() {
     };
     const rows = filteredReportDocuments.map((movement) => [
       new Date(movement.occurred_at).toLocaleString("es-MX"),
+      elapsedDays(movement.occurred_at, currentTime),
       movement.documents?.case_files?.number,
       movement.documents ? formatDocumentName(movement.documents) : "",
+      movement.documents?.folio_forma || "",
+      movement.documents?.municipality || "",
+      movement.documents?.cadastral_file_number || "",
+      movement.documents?.lawyers?.name || "",
       movement.documents?.agencies?.name,
       formatStatus(movement.documents?.status),
       movement.receipt_number || "",
+      "",
+      "",
     ]);
     const csv = [headers, ...rows].map((row) => row.map(safeCsvCell).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
@@ -905,9 +1038,9 @@ export default function HomePage() {
   function openPrintableReport(autoPrint) {
     const popup = window.open("", "_blank", "width=1100,height=750");
     if (!popup) return;
-    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td></tr>`).join("");
+    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${elapsedDays(movement.occurred_at, currentTime)}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(movement.documents?.folio_forma || "—")}</td><td>${escapeHtml(movement.documents?.municipality || "—")}</td><td>${escapeHtml(movement.documents?.cadastral_file_number || "—")}</td><td>${escapeHtml(movement.documents?.lawyers?.name || "—")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td><td class="signature-line"></td><td class="signature-line"></td></tr>`).join("");
     const filters = [reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`].filter(Boolean).join(" · ") || "Todos los movimientos";
-    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}@media print{.toolbar{display:none}body{margin:12mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
+    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>@page{size:landscape;margin:8mm}body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:9px}th,td{padding:7px 5px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}.signature-line{min-width:75px;border-bottom:1px solid #17232d}@media print{.toolbar{display:none}body{margin:8mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th><th>Quién recibe</th><th>Firma</th></tr></thead><tbody>${rows || '<tr><td colspan="13">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
     popup.document.close();
   }
 
@@ -936,7 +1069,7 @@ export default function HomePage() {
   }
 
   const normalizedSearch = search.trim().toLocaleLowerCase("es-MX");
-  const filteredDocuments = documents.filter((document) => {
+  const matchingDocuments = documents.filter((document) => {
     const matchesText = !normalizedSearch || [
       document.case_files.number,
       formatDocumentName(document),
@@ -944,6 +1077,7 @@ export default function HomePage() {
     ].some((value) => value.toLocaleLowerCase("es-MX").includes(normalizedSearch));
     return matchesText && (!statusFilter || document.status === statusFilter);
   });
+  const filteredDocuments = sortByElapsedTime(matchingDocuments, searchDaySort, (document) => document.last_movement_at, currentTime);
   const statusCards = [
     ["EN_OFICINA", "Listos para enviar"], ["ENVIADO", "Enviados"],
     ["RECHAZADO", "Rechazados"], ["AUTORIZADO", "Autorizados"],
@@ -954,15 +1088,19 @@ export default function HomePage() {
   const canManageUsers = canManageAll;
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)].filter((name) => !isObsoleteAgencyName(name)))].sort((a, b) => a.localeCompare(b, "es"));
-  // El reporte es una fotografía de la operación actual: una fila por documento.
-  // Como los movimientos llegan del más reciente al más antiguo, conservamos
-  // únicamente el primero de cada documento para no contar todo su historial.
-  const latestReportDocuments = reportMovements.filter((movement, index, movements) => (
-    movement.documents
-    && !movement.documents.archived_at
-    && movements.findIndex((item) => item.documents?.id === movement.documents.id) === index
-  ));
-  const filteredReportDocuments = latestReportDocuments.filter((movement) => {
+  // El reporte y el panel deben partir de la misma lista de documentos actuales.
+  // Usar el historial como fuente hacía que faltaran documentos cuando la consulta
+  // de movimientos alcanzaba el límite de filas de Supabase.
+  const latestReportDocuments = documents.map((document) => {
+    const latestMovement = reportMovements.find((movement) => movement.documents?.id === document.id);
+    return {
+      id: document.id,
+      occurred_at: document.last_movement_at,
+      receipt_number: latestMovement?.receipt_number ?? null,
+      documents: document,
+    };
+  });
+  const matchingReportDocuments = latestReportDocuments.filter((movement) => {
     if (!movement.documents || movement.documents.archived_at) return false;
     const movementDate = movement.occurred_at.slice(0, 10);
     const caseNumber = movement.documents?.case_files?.number ?? "";
@@ -972,6 +1110,7 @@ export default function HomePage() {
       && (!reportType || movement.documents?.document_types?.name === reportType)
       && (!reportCase.trim() || caseNumber.toLocaleLowerCase("es-MX").includes(reportCase.trim().toLocaleLowerCase("es-MX")));
   });
+  const filteredReportDocuments = sortByElapsedTime(matchingReportDocuments, reportDaySort, (movement) => movement.occurred_at, currentTime);
   const casePreviewDocuments = casePreview
     ? documents.filter((document) => document.case_files.number === casePreview)
     : [];
@@ -1002,7 +1141,7 @@ export default function HomePage() {
         <div className="session-box"><span>En sesión</span><strong>{currentUsername}</strong><small>{ROLE_LABELS[currentRole]}</small><button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button></div>
       </div>
       <nav className="main-menu" aria-label="Menú principal">
-        {[["panel", "Panel"], ...(canOperate ? [["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"]] : []), ["consulta", "Buscar"], ["reportes", "Reportes"], ...(canManageAll ? [["catalogos", "Catálogos"], ["usuarios", "Usuarios"], ["archivados", "Archivados"]] : [])].map(([view, label]) => (
+        {[["panel", "Panel"], ...(canOperate ? [["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"]] : []), ["consulta", "Buscar"], ["reportes", "Reportes"], ["archivados", "Archivados"], ...(canManageAll ? [["catalogos", "Catálogos"], ["usuarios", "Usuarios"]] : [])].map(([view, label]) => (
           <button className={activeView === view ? "active" : ""} key={view} onClick={() => setActiveView(view)}>{label}</button>
         ))}
       </nav>
@@ -1024,7 +1163,8 @@ export default function HomePage() {
             ["consulta", "2", "Consultar documentos", "Buscar por expediente, tipo o dependencia"],
             ...(canOperate ? [["boletas", "3", "Capturar boletas", "Marcar enviados sin tener el QR"], ["escanear", "4", "Escanear regresos", "Autorizar o rechazar cuando regresen"]] : []),
             ["reportes", "5", "Ver reportes", "Filtrar, imprimir o exportar"],
-            ...(canManageAll ? [["catalogos", "6", "Catálogos", "Tipos y dependencias sin errores"], ["usuarios", "7", "Usuarios", "Altas y permisos simples"]] : []),
+            ["archivados", "6", "Ver archivados", "Consultar y restaurar documentos ocultos"],
+            ...(canManageAll ? [["catalogos", "7", "Catálogos", "Tipos y dependencias sin errores"], ["usuarios", "8", "Usuarios", "Altas y permisos simples"]] : []),
           ].map(([view, step, title, text]) => (
             <button className="quick-action-card" key={view} onClick={() => setActiveView(view)}>
               <span>{step}</span>
@@ -1066,7 +1206,14 @@ export default function HomePage() {
         <label>Buscar expediente<input list="case-files" value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Escribe parte del número" required /></label>
         <datalist id="case-files">{caseFiles.map((caseFile) => <option key={caseFile.id} value={caseFile.number} />)}</datalist>
         <label>Tipo de documento<select value={documentType} onChange={(event) => changeDocumentType(event.target.value)} required><option value="">Seleccionar tipo</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+        <label>Abogado<select value={lawyerId} onChange={(event) => setLawyerId(event.target.value)} required><option value="">Seleccionar abogado</option>{lawyers.map((lawyer) => <option key={lawyer.id} value={lawyer.id}>{lawyer.name}</option>)}</select></label>
         <label>Identificador para distinguirlo (opcional)<input value={documentLabel} onChange={(event) => setDocumentLabel(event.target.value)} placeholder="Ejemplo: Original, Copia 1, Segundo certificado" maxLength="120" /></label>
+        {isDeedType(documentType) && <div className="deed-fields">
+          <label>Folio forma<input value={folioForma} onChange={(event) => setFolioForma(event.target.value)} maxLength="120" required /></label>
+          <label>Municipio<input list="municipality-options" value={municipality} onChange={(event) => setMunicipality(event.target.value)} placeholder="Selecciona o escribe otro municipio" maxLength="120" required /></label>
+          <label>No. de Exp. Catastral<input value={cadastralFileNumber} onChange={(event) => setCadastralFileNumber(event.target.value)} maxLength="120" required /></label>
+        </div>}
+        <datalist id="municipality-options">{municipalities.map((item) => <option key={item.id} value={item.name} />)}</datalist>
         {documentType === "OTROS" ? <label>Dependencia manual<input list="agency-options" value={agency} onChange={(event) => setAgency(event.target.value)} placeholder="Escribe o selecciona dependencia" required /></label> : <label>Dependencia automática<select value={agency} onChange={(event) => setAgency(event.target.value)} required disabled={Boolean(DOCUMENT_AGENCY_MAP[documentType.toLocaleUpperCase("es-MX")])}><option value="">Seleccionar dependencia</option>{availableAgencies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>}
         <datalist id="agency-options">{availableAgencies.map((name) => <option key={name} value={name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</button>
@@ -1140,12 +1287,17 @@ export default function HomePage() {
             <option value="">Todos los estatus</option>
             {statusCards.map(([status, label]) => <option value={status} key={status}>{label}</option>)}
           </select>
+          <select value={searchDaySort} onChange={(event) => setSearchDaySort(event.target.value)} aria-label="Ordenar por días en estatus">
+            <option value="">Orden original</option>
+            <option value="desc">Más días primero</option>
+            <option value="asc">Menos días primero</option>
+          </select>
         </div>
         {filteredDocuments.length === 0 ? <p className="empty-state">No hay documentos que coincidan con la búsqueda.</p> : (
           <div className="documents-list">
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
-                <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{isOutsideOffice(document.status) && <span className="time-outside">Fuera de la oficina: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
+                <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{["EN_OFICINA", "RECHAZADO", "ENVIADO", "REENVIADO"].includes(document.status) && <span className="time-outside">{statusTimeLabel(document.status)}: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
                 <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && document.status === "RECHAZADO" && <button onClick={() => markRejectedDocumentReady(document)} disabled={busy}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
               </article>
             ))}
@@ -1162,15 +1314,16 @@ export default function HomePage() {
           <label>Hasta<input type="date" value={reportEnd} onChange={(event) => setReportEnd(event.target.value)} /></label>
           <label>Estatus<select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}><option value="">Todos</option>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
           <label>Tipo de documento<select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">Todos</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+          <label>Ordenar por días<select value={reportDaySort} onChange={(event) => setReportDaySort(event.target.value)}><option value="">Orden original</option><option value="desc">Más días primero</option><option value="asc">Menos días primero</option></select></label>
         </div>
-        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>
-          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
-          {filteredReportDocuments.length === 0 && <tr><td colSpan="6">No hay documentos que coincidan con estos filtros.</td></tr>}
+        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th></tr></thead><tbody>
+          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td><strong>{elapsedDays(movement.occurred_at, currentTime)}</strong></td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{movement.documents?.folio_forma || "—"}</td><td>{movement.documents?.municipality || "—"}</td><td>{movement.documents?.cadastral_file_number || "—"}</td><td>{movement.documents?.lawyers?.name || "—"}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
+          {filteredReportDocuments.length === 0 && <tr><td colSpan="11">No hay documentos que coincidan con estos filtros.</td></tr>}
         </tbody></table></div>
       </section>}
 
       {activeView === "catalogos" && <section className="catalogs-section standalone">
-        <div className="catalogs-heading"><div><p className="eyebrow">CATÁLOGOS</p><h2>Tipos de documento y dependencias</h2><p>Agrega opciones aquí para evitar capturas diferentes del mismo dato.</p></div></div>
+        <div className="catalogs-heading"><div><p className="eyebrow">CATÁLOGOS</p><h2>Datos de captura</h2><p>Administra tipos, dependencias, abogados y municipios desde un solo lugar.</p></div></div>
         <div className="catalogs-grid">
           <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "document_types", newDocumentTypeName, setNewDocumentTypeName, setDocumentTypes, "Tipo de documento")}>
             <h3>Tipos de documento</h3>
@@ -1190,6 +1343,18 @@ export default function HomePage() {
               {agencies.map((record) => <span className={isObsoleteAgencyName(record.name) ? "catalog-invalid" : ""} key={record.id}>{record.name}{canManageAll && <button type="button" className="catalog-delete" onClick={() => deleteCatalogItem("agencies", record, setAgencies, "Dependencia")} disabled={busy} aria-label={`Eliminar ${record.name}`}>×</button>}</span>)}
               {DEFAULT_AGENCIES.filter((name) => !agencies.some((record) => record.name.toLocaleUpperCase("es-MX") === name.toLocaleUpperCase("es-MX"))).map((name) => <span key={name}>{name}</span>)}
             </div>
+          </form>
+          <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "lawyers", newLawyerName, setNewLawyerName, setLawyers, "Abogado")}>
+            <h3>Abogados</h3>
+            <label>Nombre del abogado<input value={newLawyerName} onChange={(event) => setNewLawyerName(event.target.value)} placeholder="Ejemplo: LIC. ANA PÉREZ" required /></label>
+            <button type="submit" disabled={busy}>Agregar abogado</button>
+            <div className="catalog-tags">{lawyers.map((record) => <span key={record.id}>{record.name}{canManageAll && <button type="button" className="catalog-delete" onClick={() => deleteCatalogItem("lawyers", record, setLawyers, "Abogado")} disabled={busy} aria-label={`Eliminar ${record.name}`}>×</button>}</span>)}</div>
+          </form>
+          <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "municipalities", newMunicipalityName, setNewMunicipalityName, setMunicipalities, "Municipio")}>
+            <h3>Municipios</h3>
+            <label>Nuevo municipio<input value={newMunicipalityName} onChange={(event) => setNewMunicipalityName(event.target.value)} placeholder="Escribe un municipio adicional" required /></label>
+            <button type="submit" disabled={busy}>Agregar municipio</button>
+            <div className="catalog-tags">{municipalities.map((record) => <span key={record.id}>{record.name}{canManageAll && <button type="button" className="catalog-delete" onClick={() => deleteCatalogItem("municipalities", record, setMunicipalities, "Municipio")} disabled={busy} aria-label={`Eliminar ${record.name}`}>×</button>}</span>)}</div>
           </form>
         </div>
       </section>}
