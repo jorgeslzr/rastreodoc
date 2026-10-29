@@ -20,7 +20,7 @@ const ROLE_LABELS = {
   empleado: "Empleado",
   consulta: "Consulta",
 };
-const DOCUMENT_SELECT = "id, qr_token, label, folio_forma, municipality, cadastral_file_number, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name), lawyers(id, name)";
+const DOCUMENT_SELECT = "id, qr_token, label, lawyer_id, folio_forma, municipality, cadastral_file_number, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)";
 const REPORT_MOVEMENT_SELECT = "id, status, occurred_at, receipt_number, documents!inner(id, label, status, archived_at, case_files(number), document_types(name), agencies(name))";
 
 const DOCUMENT_AGENCY_MAP = {
@@ -271,15 +271,23 @@ export default function HomePage() {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
       setAgencies(agencyResult.data ?? []);
-      setLawyers(lawyerResult.data ?? []);
+      const loadedLawyers = lawyerResult.data ?? [];
+      const lawyersById = new Map(loadedLawyers.map((lawyer) => [lawyer.id, lawyer]));
+      const attachLawyer = (document) => ({
+        ...document,
+        lawyers: lawyersById.get(document.lawyer_id) ?? null,
+      });
+      setLawyers(loadedLawyers);
       setMunicipalities(municipalityResult.data ?? []);
       setProfiles(profileResult.data ?? []);
       const sessionProfile = profileResult.data?.find((profile) => profile.id === session.user.id);
       setCurrentRole(sessionProfile?.role ?? "admin");
       setCurrentUsername(sessionProfile?.username ?? session.user.email?.split("@")[0] ?? "usuario");
-      setDocuments(documentResult.data ?? []);
-      setArchivedDocuments(archivedResult.data ?? []);
+      setDocuments((documentResult.data ?? []).map(attachLawyer));
+      setArchivedDocuments((archivedResult.data ?? []).map(attachLawyer));
       setReportMovements(movementResult.data ?? []);
+      const loadError = documentResult.error ?? archivedResult.error ?? caseResult.error;
+      if (loadError) setMessage({ type: "error", text: "No fue posible cargar toda la información. Recarga la página; si continúa, revisa que las migraciones estén aplicadas." });
       if (sessionProfile?.role === "admin") refreshStorageUsage();
     });
   }, [session]);
@@ -544,7 +552,8 @@ export default function HomePage() {
 
     setDocumentTypes((current) => current.some(({ id }) => id === typeRecord.id) ? current : [...current, typeRecord]);
     setAgencies((current) => current.some(({ id }) => id === agencyRecord.id) ? current : [...current, agencyRecord]);
-    setDocuments((current) => [data, ...current]);
+    const selectedLawyer = lawyers.find((lawyer) => lawyer.id === lawyerId) ?? null;
+    setDocuments((current) => [{ ...data, lawyers: selectedLawyer }, ...current]);
     setDocumentType("");
     setDocumentLabel("");
     setFolioForma("");
