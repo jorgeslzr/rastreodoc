@@ -64,14 +64,21 @@ function fetchReportMovements() {
 
 async function fetchDocuments(archived = false) {
   const buildQuery = (select, from, to) => {
-    const query = supabase
+    let query = supabase
       .from("documents")
-      .select(select)
-      [archived ? "not" : "is"]("archived_at", "is", null)
+      .select(select);
+
+    // Supabase's filters do not share the same signature: `is` receives two
+    // arguments while `not` receives three. Keep the calls explicit so active
+    // documents use `archived_at=is.null`, not the invalid `is.is` filter.
+    query = archived
+      ? query.not("archived_at", "is", null)
+      : query.is("archived_at", null);
+
+    return query
       .order(archived ? "archived_at" : "created_at", { ascending: false })
       .order("id", { ascending: false })
       .range(from, to);
-    return query;
   };
 
   const result = await fetchAllPages((from, to) => buildQuery(DOCUMENT_SELECT, from, to));
