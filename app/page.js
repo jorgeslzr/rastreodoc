@@ -12,6 +12,7 @@ const DEFAULT_AGENCIES = [
   "REGISTRO PÚBLICO", "TESORERÍA MUNICIPAL", "ARCHIVO GENERAL DE NOTARÍAS", "INFONAVIT",
 ];
 const USER_DOMAIN = "usuarios.rastreadoc.mx";
+const SUPABASE_PAGE_SIZE = 1000;
 const DATABASE_STORAGE_LIMIT_BYTES = (Number(process.env.NEXT_PUBLIC_DATABASE_STORAGE_LIMIT_MB) || 500) * 1024 ** 2;
 const ROLE_LABELS = {
   admin: "Administrador",
@@ -34,6 +35,30 @@ const DOCUMENT_AGENCY_MAP = {
   "FIRMA CANCELACION INFONAVIT": "INFONAVIT",
   "FIRMA CANCELACIÓN INFONAVIT": "INFONAVIT",
 };
+
+async function fetchAllPages(buildQuery) {
+  const rows = [];
+
+  for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
+    const { data, error } = await buildQuery(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < SUPABASE_PAGE_SIZE) return { data: rows, error: null };
+  }
+}
+
+function fetchReportMovements() {
+  return fetchAllPages((from, to) => supabase
+    .from("movements")
+    .select(REPORT_MOVEMENT_SELECT)
+    .not("receipt_number", "is", null)
+    .is("documents.archived_at", null)
+    .order("occurred_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to));
+}
 
 function usernameToEmail(username) {
   const cleanUsername = username.trim().toLocaleLowerCase("es-MX").replace(/\s+/g, "_");
@@ -78,6 +103,25 @@ function formatTimeOutside(date, currentTime) {
   const hours = totalHours % 24;
   if (days === 0) return `${hours} ${hours === 1 ? "hora" : "horas"}`;
   return `${days} ${days === 1 ? "día" : "días"}, ${hours} ${hours === 1 ? "hora" : "horas"}`;
+}
+
+function elapsedDays(date, currentTime) {
+  return Math.max(0, Math.floor((currentTime - new Date(date).getTime()) / 86400000));
+}
+
+function statusTimeLabel(status) {
+  if (status === "EN_OFICINA") return "Listo para enviar desde hace";
+  if (status === "RECHAZADO") return "Rechazado desde hace";
+  if (isOutsideOffice(status)) return "Fuera de la oficina";
+  return "En el estatus actual desde hace";
+}
+
+function sortByElapsedTime(items, direction, getDate, currentTime) {
+  if (!direction) return items;
+  const multiplier = direction === "desc" ? -1 : 1;
+  return [...items].sort((first, second) => (
+    elapsedDays(getDate(first), currentTime) - elapsedDays(getDate(second), currentTime)
+  ) * multiplier);
 }
 
 function isOutsideOffice(status) {
@@ -147,6 +191,7 @@ export default function HomePage() {
   const [correctionNote, setCorrectionNote] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [searchDaySort, setSearchDaySort] = useState("");
   const [historyPreview, setHistoryPreview] = useState(null);
   const [scanMode, setScanMode] = useState("");
   const [activeView, setActiveView] = useState("panel");
@@ -158,6 +203,7 @@ export default function HomePage() {
   const [reportStart, setReportStart] = useState("");
   const [reportEnd, setReportEnd] = useState("");
   const [reportCase, setReportCase] = useState("");
+  const [reportDaySort, setReportDaySort] = useState("");
   const [casePreview, setCasePreview] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const scanInputRef = useRef(null);
@@ -195,13 +241,13 @@ export default function HomePage() {
     if (!session) return;
 
     Promise.all([
-      supabase.from("case_files").select("id, number").order("created_at", { ascending: false }),
+      fetchAllPages((from, to) => supabase.from("case_files").select("id, number").order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
       supabase.from("document_types").select("id, name").order("name"),
       supabase.from("agencies").select("id, name").order("name"),
       supabase.from("profiles").select("id, username, role").order("created_at", { ascending: false }),
-      supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }),
-      supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").not("archived_at", "is", null).order("archived_at", { ascending: false }),
-      supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false }),
+      fetchAllPages((from, to) => supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").is("archived_at", null).order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
+      fetchAllPages((from, to) => supabase.from("documents").select("id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)").not("archived_at", "is", null).order("archived_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
+      fetchReportMovements(),
     ]).then(([caseResult, typeResult, agencyResult, profileResult, documentResult, archivedResult, movementResult]) => {
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
@@ -473,7 +519,7 @@ export default function HomePage() {
     setDocumentLabel("");
     setAgency("");
     setMessage({ type: "success", text: "Documento agregado con estatus LISTO PARA ENVIAR." });
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -623,7 +669,7 @@ export default function HomePage() {
 
     const updated = { ...targetDocument, status: resolvedStatus, last_movement_at: new Date().toISOString() };
     setScannedDocument(updated);
-    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status: resolvedStatus } : document));
+    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status: resolvedStatus, last_movement_at: updated.last_movement_at } : document));
     if (!scanMode) {
       setRejectionReason("");
       setMovementNotes("");
@@ -631,7 +677,7 @@ export default function HomePage() {
     if (["ENVIADO", "REENVIADO"].includes(resolvedStatus)) setReceiptNumber("");
     setMessage({ type: "success", text: `Movimiento registrado: ${formatStatus(resolvedStatus)}.` });
     setManualMovementReady(false);
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
   }
 
@@ -675,7 +721,7 @@ export default function HomePage() {
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: resolvedStatus, last_movement_at: new Date().toISOString() } : item));
     setReceiptDrafts((current) => ({ ...current, [document.id]: "" }));
     setMessage({ type: "success", text: `Boleta guardada. Documento marcado como ${formatStatus(resolvedStatus)}.` });
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -701,7 +747,7 @@ export default function HomePage() {
 
     const lastMovementAt = new Date().toISOString();
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -727,7 +773,7 @@ export default function HomePage() {
 
     const lastMovementAt = new Date().toISOString();
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -753,7 +799,7 @@ export default function HomePage() {
 
     const lastMovementAt = new Date().toISOString();
     setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
   }
@@ -833,7 +879,7 @@ export default function HomePage() {
     }
 
     setDocuments((current) => current.map((document) => document.id === editPreview.id ? { ...document, status: correctedStatus, label: cleanLabel || null } : document));
-    const { data: refreshedMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: refreshedMovements } = await fetchReportMovements();
     setReportMovements(refreshedMovements ?? []);
     setEditPreview(null);
     setMessage({ type: "success", text: "Cambios del documento guardados correctamente." });
@@ -873,13 +919,13 @@ export default function HomePage() {
 
     setArchivedDocuments((current) => current.filter((item) => item.id !== document.id));
     setDocuments((current) => [{ ...document, archived_at: null }, ...current]);
-    const { data: restoredMovements } = await supabase.from("movements").select(REPORT_MOVEMENT_SELECT).is("documents.archived_at", null).order("occurred_at", { ascending: false });
+    const { data: restoredMovements } = await fetchReportMovements();
     setReportMovements(restoredMovements ?? []);
     setMessage({ type: "success", text: "Documento restaurado y disponible nuevamente." });
   }
 
   function exportReportToExcel() {
-    const headers = ["Último movimiento", "Expediente", "Documento", "Dependencia", "Estatus actual", "Boleta"];
+    const headers = ["Último movimiento", "Días en estatus", "Expediente", "Documento", "Dependencia", "Estatus actual", "Número de boleta"];
     const safeCsvCell = (value) => {
       let text = String(value ?? "");
       if (/^[=+\-@]/.test(text)) text = `'${text}`;
@@ -887,6 +933,7 @@ export default function HomePage() {
     };
     const rows = filteredReportDocuments.map((movement) => [
       new Date(movement.occurred_at).toLocaleString("es-MX"),
+      elapsedDays(movement.occurred_at, currentTime),
       movement.documents?.case_files?.number,
       movement.documents ? formatDocumentName(movement.documents) : "",
       movement.documents?.agencies?.name,
@@ -905,9 +952,9 @@ export default function HomePage() {
   function openPrintableReport(autoPrint) {
     const popup = window.open("", "_blank", "width=1100,height=750");
     if (!popup) return;
-    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td></tr>`).join("");
+    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${elapsedDays(movement.occurred_at, currentTime)}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td></tr>`).join("");
     const filters = [reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`].filter(Boolean).join(" · ") || "Todos los movimientos";
-    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}@media print{.toolbar{display:none}body{margin:12mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
+    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}@media print{.toolbar{display:none}body{margin:12mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
     popup.document.close();
   }
 
@@ -936,7 +983,7 @@ export default function HomePage() {
   }
 
   const normalizedSearch = search.trim().toLocaleLowerCase("es-MX");
-  const filteredDocuments = documents.filter((document) => {
+  const matchingDocuments = documents.filter((document) => {
     const matchesText = !normalizedSearch || [
       document.case_files.number,
       formatDocumentName(document),
@@ -944,6 +991,7 @@ export default function HomePage() {
     ].some((value) => value.toLocaleLowerCase("es-MX").includes(normalizedSearch));
     return matchesText && (!statusFilter || document.status === statusFilter);
   });
+  const filteredDocuments = sortByElapsedTime(matchingDocuments, searchDaySort, (document) => document.last_movement_at, currentTime);
   const statusCards = [
     ["EN_OFICINA", "Listos para enviar"], ["ENVIADO", "Enviados"],
     ["RECHAZADO", "Rechazados"], ["AUTORIZADO", "Autorizados"],
@@ -954,15 +1002,19 @@ export default function HomePage() {
   const canManageUsers = canManageAll;
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)].filter((name) => !isObsoleteAgencyName(name)))].sort((a, b) => a.localeCompare(b, "es"));
-  // El reporte es una fotografía de la operación actual: una fila por documento.
-  // Como los movimientos llegan del más reciente al más antiguo, conservamos
-  // únicamente el primero de cada documento para no contar todo su historial.
-  const latestReportDocuments = reportMovements.filter((movement, index, movements) => (
-    movement.documents
-    && !movement.documents.archived_at
-    && movements.findIndex((item) => item.documents?.id === movement.documents.id) === index
-  ));
-  const filteredReportDocuments = latestReportDocuments.filter((movement) => {
+  // El reporte y el panel deben partir de la misma lista de documentos actuales.
+  // Usar el historial como fuente hacía que faltaran documentos cuando la consulta
+  // de movimientos alcanzaba el límite de filas de Supabase.
+  const latestReportDocuments = documents.map((document) => {
+    const latestMovement = reportMovements.find((movement) => movement.documents?.id === document.id);
+    return {
+      id: document.id,
+      occurred_at: document.last_movement_at,
+      receipt_number: latestMovement?.receipt_number ?? null,
+      documents: document,
+    };
+  });
+  const matchingReportDocuments = latestReportDocuments.filter((movement) => {
     if (!movement.documents || movement.documents.archived_at) return false;
     const movementDate = movement.occurred_at.slice(0, 10);
     const caseNumber = movement.documents?.case_files?.number ?? "";
@@ -972,6 +1024,7 @@ export default function HomePage() {
       && (!reportType || movement.documents?.document_types?.name === reportType)
       && (!reportCase.trim() || caseNumber.toLocaleLowerCase("es-MX").includes(reportCase.trim().toLocaleLowerCase("es-MX")));
   });
+  const filteredReportDocuments = sortByElapsedTime(matchingReportDocuments, reportDaySort, (movement) => movement.occurred_at, currentTime);
   const casePreviewDocuments = casePreview
     ? documents.filter((document) => document.case_files.number === casePreview)
     : [];
@@ -1002,7 +1055,7 @@ export default function HomePage() {
         <div className="session-box"><span>En sesión</span><strong>{currentUsername}</strong><small>{ROLE_LABELS[currentRole]}</small><button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button></div>
       </div>
       <nav className="main-menu" aria-label="Menú principal">
-        {[["panel", "Panel"], ...(canOperate ? [["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"]] : []), ["consulta", "Buscar"], ["reportes", "Reportes"], ...(canManageAll ? [["catalogos", "Catálogos"], ["usuarios", "Usuarios"], ["archivados", "Archivados"]] : [])].map(([view, label]) => (
+        {[["panel", "Panel"], ...(canOperate ? [["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"]] : []), ["consulta", "Buscar"], ["reportes", "Reportes"], ["archivados", "Archivados"], ...(canManageAll ? [["catalogos", "Catálogos"], ["usuarios", "Usuarios"]] : [])].map(([view, label]) => (
           <button className={activeView === view ? "active" : ""} key={view} onClick={() => setActiveView(view)}>{label}</button>
         ))}
       </nav>
@@ -1024,7 +1077,8 @@ export default function HomePage() {
             ["consulta", "2", "Consultar documentos", "Buscar por expediente, tipo o dependencia"],
             ...(canOperate ? [["boletas", "3", "Capturar boletas", "Marcar enviados sin tener el QR"], ["escanear", "4", "Escanear regresos", "Autorizar o rechazar cuando regresen"]] : []),
             ["reportes", "5", "Ver reportes", "Filtrar, imprimir o exportar"],
-            ...(canManageAll ? [["catalogos", "6", "Catálogos", "Tipos y dependencias sin errores"], ["usuarios", "7", "Usuarios", "Altas y permisos simples"]] : []),
+            ["archivados", "6", "Ver archivados", "Consultar y restaurar documentos ocultos"],
+            ...(canManageAll ? [["catalogos", "7", "Catálogos", "Tipos y dependencias sin errores"], ["usuarios", "8", "Usuarios", "Altas y permisos simples"]] : []),
           ].map(([view, step, title, text]) => (
             <button className="quick-action-card" key={view} onClick={() => setActiveView(view)}>
               <span>{step}</span>
@@ -1140,12 +1194,17 @@ export default function HomePage() {
             <option value="">Todos los estatus</option>
             {statusCards.map(([status, label]) => <option value={status} key={status}>{label}</option>)}
           </select>
+          <select value={searchDaySort} onChange={(event) => setSearchDaySort(event.target.value)} aria-label="Ordenar por días en estatus">
+            <option value="">Orden original</option>
+            <option value="desc">Más días primero</option>
+            <option value="asc">Menos días primero</option>
+          </select>
         </div>
         {filteredDocuments.length === 0 ? <p className="empty-state">No hay documentos que coincidan con la búsqueda.</p> : (
           <div className="documents-list">
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
-                <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{isOutsideOffice(document.status) && <span className="time-outside">Fuera de la oficina: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
+                <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{["EN_OFICINA", "RECHAZADO", "ENVIADO", "REENVIADO"].includes(document.status) && <span className="time-outside">{statusTimeLabel(document.status)}: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
                 <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && document.status === "RECHAZADO" && <button onClick={() => markRejectedDocumentReady(document)} disabled={busy}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
               </article>
             ))}
@@ -1162,10 +1221,11 @@ export default function HomePage() {
           <label>Hasta<input type="date" value={reportEnd} onChange={(event) => setReportEnd(event.target.value)} /></label>
           <label>Estatus<select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}><option value="">Todos</option>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
           <label>Tipo de documento<select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">Todos</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+          <label>Ordenar por días<select value={reportDaySort} onChange={(event) => setReportDaySort(event.target.value)}><option value="">Orden original</option><option value="desc">Más días primero</option><option value="asc">Menos días primero</option></select></label>
         </div>
-        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Boleta</th></tr></thead><tbody>
-          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
-          {filteredReportDocuments.length === 0 && <tr><td colSpan="6">No hay documentos que coincidan con estos filtros.</td></tr>}
+        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th></tr></thead><tbody>
+          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td><strong>{elapsedDays(movement.occurred_at, currentTime)}</strong></td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
+          {filteredReportDocuments.length === 0 && <tr><td colSpan="7">No hay documentos que coincidan con estos filtros.</td></tr>}
         </tbody></table></div>
       </section>}
 
