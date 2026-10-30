@@ -74,6 +74,7 @@ create table if not exists public.documents (
   folio_forma text,
   municipality text,
   cadastral_file_number text,
+  deed_entries jsonb not null default '[]'::jsonb,
   status public.document_status not null default 'EN_OFICINA',
   qr_token uuid not null unique default gen_random_uuid(),
   last_movement_at timestamptz not null default now(),
@@ -86,7 +87,8 @@ create table if not exists public.documents (
     (folio_forma is null or length(folio_forma) <= 120)
     and (municipality is null or length(municipality) <= 120)
     and (cadastral_file_number is null or length(cadastral_file_number) <= 120)
-  )
+  ),
+  constraint documents_deed_entries_array check (jsonb_typeof(deed_entries) = 'array')
 );
 
 create index if not exists documents_case_file_id_idx on public.documents(case_file_id);

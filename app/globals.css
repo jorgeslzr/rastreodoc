@@ -90,6 +90,10 @@ button:disabled { opacity:.65; cursor:wait; }
 .quick-register { width:100%; margin-top:18px; }
 .deed-fields { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
 .deed-fields label { margin:0; }
+.deed-entry-list { display:grid; gap:14px; }
+.deed-entry { margin:0; padding:16px; border:1px solid #d7e0e5; border-radius:10px; }
+.deed-entry legend { padding:0 7px; color:#18324a; font-weight:800; }
+.deed-entry .remove-deed-entry { width:auto; margin-top:12px; }
 .danger-button { background:var(--danger); }
 .danger-button:hover { background:#812323; }
 .documents-section { margin-top:48px; }
