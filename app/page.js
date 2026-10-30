@@ -1238,7 +1238,7 @@ export default function HomePage() {
         <label>Identificador para distinguirlo (opcional)<input value={documentLabel} onChange={(event) => setDocumentLabel(event.target.value)} placeholder="Ejemplo: Original, Copia 1, Segundo certificado" maxLength="120" /></label>
         {isDeedType(documentType) && <div className="deed-entry-list">
           {deedEntries.map((entry, index) => <fieldset className="deed-entry" key={index}>
-            <legend>Datos de escritura {index + 1}</legend>
+            <legend>Datos de Lote {index + 1}</legend>
             <div className="deed-fields">
               <label>Folio forma<input value={entry.folio_forma} onChange={(event) => updateDeedEntry(index, "folio_forma", event.target.value)} maxLength="120" required /></label>
               <label>Municipio<input list="municipality-options" value={entry.municipality} onChange={(event) => updateDeedEntry(index, "municipality", event.target.value)} placeholder="Selecciona o escribe otro municipio" maxLength="120" required /></label>
