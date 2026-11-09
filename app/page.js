@@ -250,6 +250,7 @@ export default function HomePage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [number, setNumber] = useState("");
+  const [auxiliary, setAuxiliary] = useState("");
   const [caseFiles, setCaseFiles] = useState([]);
   const [caseSearch, setCaseSearch] = useState("");
   const [documentType, setDocumentType] = useState("");
@@ -316,6 +317,10 @@ export default function HomePage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      return;
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setLoadingSession(false);
@@ -491,15 +496,16 @@ export default function HomePage() {
   async function createCaseFile(event) {
     event.preventDefault();
     const cleanNumber = number.trim();
+    const cleanAuxiliary = auxiliary.trim();
 
-    if (!cleanNumber) return;
+    if (!cleanNumber || !cleanAuxiliary) return;
 
     setBusy(true);
     setMessage(null);
     const { data, error } = await supabase
       .from("case_files")
-      .insert({ number: cleanNumber })
-      .select("id, number")
+      .insert({ number: cleanNumber, auxiliary: cleanAuxiliary })
+      .select("id, number, auxiliary")
       .single();
     setBusy(false);
 
@@ -517,6 +523,7 @@ export default function HomePage() {
     }
 
     setNumber("");
+    setAuxiliary("");
     setCaseFiles((current) => [data, ...current]);
     setCaseSearch(data.number);
     setMessage({ type: "success", text: `Expediente ${cleanNumber} guardado correctamente.` });
@@ -1046,10 +1053,10 @@ export default function HomePage() {
   async function restoreDocument(document) {
     setBusy(true);
     setMessage(null);
-    const { error } = await supabase.from("documents").update({ archived_at: null }).eq("id", document.id);
+    const { data: restored, error } = await supabase.rpc("restore_archived_document", { target_document_id: document.id });
     setBusy(false);
 
-    if (error) {
+    if (error || !restored) {
       setMessage({ type: "error", text: "No fue posible restaurar el documento." });
       return;
     }
@@ -1101,6 +1108,10 @@ export default function HomePage() {
     const filters = [alertLabel && `Seguimiento: ${alertLabel}`, reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`, reportLawyer && `Abogado: ${lawyers.find(({ id }) => id === reportLawyer)?.name}`, reportAuxiliary && `Auxiliar: ${auxiliaries.find(({ id }) => id === reportAuxiliary)?.name}`].filter(Boolean).join(" · ") || "Todos los movimientos";
     popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>@page{size:landscape;margin:8mm}body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:9px}th,td{padding:7px 5px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}.signature-line{min-width:75px;border-bottom:1px solid #17232d}@media print{.toolbar{display:none}body{margin:8mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Auxiliar</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th><th>Quién recibe</th><th>Firma</th></tr></thead><tbody>${rows || '<tr><td colspan="14">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
     popup.document.close();
+  }
+
+  if (!isSupabaseConfigured) {
+    return <main className="center-shell"><section className="panel"><p className="eyebrow">CONFIGURACIÓN PENDIENTE</p><h1>Falta conectar Supabase</h1><p>Agrega <code>NEXT_PUBLIC_SUPABASE_URL</code> y <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> al entorno de este despliegue en Vercel y vuelve a desplegar.</p></section></main>;
   }
 
   if (loadingSession) {
@@ -1270,6 +1281,8 @@ export default function HomePage() {
           <p>Escribe el número exactamente como aparece en tu otro programa.</p>
         </div>
         <label>Número de expediente<input value={number} onChange={(event) => setNumber(event.target.value)} placeholder="Ejemplo: 2548/2026" autoFocus required /></label>
+        <label>Auxiliar<input list="auxiliary-options" value={auxiliary} onChange={(event) => setAuxiliary(event.target.value)} placeholder="Nombre del auxiliar" maxLength="120" required /></label>
+        <datalist id="auxiliary-options">{availableAuxiliaries.map((name) => <option key={name} value={name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Guardar expediente"}</button>
       </form>
       <SectionErrorBoundary render={() => (
