@@ -201,6 +201,17 @@ function isOutsideOffice(status) {
   return ["ENVIADO", "REENVIADO"].includes(status);
 }
 
+function overdueCategory(document, currentTime) {
+  const days = elapsedDays(document.last_movement_at, currentTime);
+  if (document.status === "RECHAZADO" && days > 5) return "REJECTED_OVERDUE";
+  if (!isOutsideOffice(document.status)) return "";
+
+  const agency = document.agencies?.name?.trim().toLocaleUpperCase("es-MX") ?? "";
+  if (agency.includes("REGISTRO") && days > 30) return "SENT_OVERDUE";
+  if (agency.includes("TESORERÍA") && days > 15) return "SENT_OVERDUE";
+  return "";
+}
+
 function buildQrPayload(token) {
   return `RDOC:${token}`;
 }
@@ -285,6 +296,7 @@ export default function HomePage() {
   const [reportCase, setReportCase] = useState("");
   const [reportLawyer, setReportLawyer] = useState("");
   const [reportAuxiliary, setReportAuxiliary] = useState("");
+  const [reportAlert, setReportAlert] = useState("");
   const [reportDaySort, setReportDaySort] = useState("");
   const [casePreview, setCasePreview] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
@@ -1081,7 +1093,8 @@ export default function HomePage() {
     const popup = window.open("", "_blank", "width=1100,height=750");
     if (!popup) return;
     const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${elapsedDays(movement.occurred_at, currentTime)}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents?.case_files?.auxiliary || "—")}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(deedColumn(movement.documents, "folio_forma") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "municipality") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "cadastral_file_number") || "—")}</td><td>${escapeHtml(movement.documents?.lawyers?.name || "—")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td><td class="signature-line"></td><td class="signature-line"></td></tr>`).join("");
-    const filters = [reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`, reportLawyer && `Abogado: ${lawyers.find(({ id }) => id === reportLawyer)?.name}`, reportAuxiliary && `Auxiliar: ${reportAuxiliary}`].filter(Boolean).join(" · ") || "Todos los movimientos";
+    const alertLabel = reportAlert === "SENT_OVERDUE" ? "Enviados vencidos" : reportAlert === "REJECTED_OVERDUE" ? "Rechazados vencidos" : "";
+    const filters = [alertLabel && `Seguimiento: ${alertLabel}`, reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`, reportLawyer && `Abogado: ${lawyers.find(({ id }) => id === reportLawyer)?.name}`, reportAuxiliary && `Auxiliar: ${reportAuxiliary}`].filter(Boolean).join(" · ") || "Todos los movimientos";
     popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>@page{size:landscape;margin:8mm}body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:9px}th,td{padding:7px 5px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}.signature-line{min-width:75px;border-bottom:1px solid #17232d}@media print{.toolbar{display:none}body{margin:8mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Auxiliar</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th><th>Quién recibe</th><th>Firma</th></tr></thead><tbody>${rows || '<tr><td colspan="14">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
     popup.document.close();
   }
@@ -1135,6 +1148,8 @@ export default function HomePage() {
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)].filter((name) => !isObsoleteAgencyName(name)))].sort((a, b) => a.localeCompare(b, "es"));
   const availableAuxiliaries = [...new Set(caseFiles.map(({ auxiliary: name }) => name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
+  const overdueSentDocuments = documents.filter((document) => overdueCategory(document, currentTime) === "SENT_OVERDUE");
+  const overdueRejectedDocuments = documents.filter((document) => overdueCategory(document, currentTime) === "REJECTED_OVERDUE");
   // El reporte y el panel deben partir de la misma lista de documentos actuales.
   // Usar el historial como fuente hacía que faltaran documentos cuando la consulta
   // de movimientos alcanzaba el límite de filas de Supabase.
@@ -1157,6 +1172,7 @@ export default function HomePage() {
       && (!reportType || movement.documents?.document_types?.name === reportType)
       && (!reportLawyer || movement.documents?.lawyer_id === reportLawyer)
       && (!reportAuxiliary || movement.documents?.case_files?.auxiliary === reportAuxiliary)
+      && (!reportAlert || overdueCategory(movement.documents, currentTime) === reportAlert)
       && (!reportCase.trim() || caseNumber.toLocaleLowerCase("es-MX").includes(reportCase.trim().toLocaleLowerCase("es-MX")));
   });
   const filteredReportDocuments = sortByElapsedTime(matchingReportDocuments, reportDaySort, (movement) => movement.occurred_at, currentTime);
@@ -1229,6 +1245,13 @@ export default function HomePage() {
             </button>
           ))}
         </section>
+        {(overdueSentDocuments.length > 0 || overdueRejectedDocuments.length > 0) && <section className="overdue-alert" role="alert" aria-label="Documentos que requieren atención">
+          <div><p className="eyebrow">ATENCIÓN</p><h3>Hay documentos que excedieron el tiempo de seguimiento</h3><p>Consulta el reporte para dar seguimiento a los documentos enviados o rechazados.</p></div>
+          <div className="overdue-alert-actions">
+            {overdueSentDocuments.length > 0 && <button onClick={() => { setReportAlert("SENT_OVERDUE"); setActiveView("reportes"); }}><strong>{overdueSentDocuments.length}</strong><span>Enviados vencidos</span><small>Registro: más de 30 días · Tesorería: más de 15 días</small></button>}
+            {overdueRejectedDocuments.length > 0 && <button onClick={() => { setReportAlert("REJECTED_OVERDUE"); setActiveView("reportes"); }}><strong>{overdueRejectedDocuments.length}</strong><span>Rechazados vencidos</span><small>Más de 5 días en rechazo</small></button>}
+          </div>
+        </section>}
         {currentRole === "admin" && <section className={`storage-card ${storageStatus.className}`} aria-label="Almacenamiento de la base de datos">
           <div className="storage-details"><p className="eyebrow">ALMACENAMIENTO</p><h3>Espacio utilizado por RASTREADOC</h3><strong>{storageError ? "No disponible" : storageUsage === null ? "Consultando…" : `${formatStorageSize(storageUsage)} de ${formatStorageSize(DATABASE_STORAGE_LIMIT_BYTES)}`}</strong>{!storageError && storageUsage !== null && <><div className="storage-meter" role="progressbar" aria-label="Porcentaje de almacenamiento utilizado" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(storagePercentage)}><span style={{ width: `${storagePercentage}%` }} /></div><p className="storage-reading"><b>{storagePercentage.toFixed(1)}% utilizado</b> · Quedan aproximadamente {formatStorageSize(Math.max(0, DATABASE_STORAGE_LIMIT_BYTES - storageUsage))}</p><p className="storage-alert">{storageStatus.message}</p></>}<p>Incluye expedientes, documentos, movimientos, usuarios y catálogos. Límite configurado: {formatStorageSize(DATABASE_STORAGE_LIMIT_BYTES)}.</p></div>
           <button className="secondary" onClick={refreshStorageUsage}>Actualizar</button>
@@ -1366,6 +1389,7 @@ export default function HomePage() {
         <div className="reports-heading"><div><p className="eyebrow">DOCUMENTOS ACTUALES</p><h2>Reporte por fecha y tipo de documento</h2></div><strong>{filteredReportDocuments.length} documentos</strong></div>
         <div className="report-actions"><button onClick={() => openPrintableReport(true)}>Imprimir</button><button className="secondary" onClick={exportReportToExcel}>Exportar a Excel</button><button className="secondary" onClick={() => openPrintableReport(false)}>Ver PDF</button></div>
         <div className="report-filters">
+          <label>Seguimiento<select value={reportAlert} onChange={(event) => setReportAlert(event.target.value)}><option value="">Todos los documentos</option><option value="SENT_OVERDUE">Enviados vencidos</option><option value="REJECTED_OVERDUE">Rechazados vencidos</option></select></label>
           <label>Expediente<input list="report-case-files" value={reportCase} onChange={(event) => setReportCase(event.target.value)} placeholder="Escribe parte del número" /></label>
           <datalist id="report-case-files">{caseFiles.map((caseFile) => <option key={caseFile.id} value={caseFile.number} />)}</datalist>
           <label>Desde<input type="date" value={reportStart} onChange={(event) => setReportStart(event.target.value)} /></label>

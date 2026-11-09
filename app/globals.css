@@ -38,6 +38,15 @@ button:disabled { opacity:.65; cursor:wait; }
 .welcome-card h2 { margin:0; color:var(--navy); }
 .welcome-card p:not(.eyebrow) { margin:7px 0 0; color:var(--muted); }
 .dashboard-cards { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:28px; }
+.overdue-alert { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-bottom:24px; padding:22px 24px; border:1px solid #d88b27; border-left:6px solid #d16a24; border-radius:14px; background:#fff8ed; }
+.overdue-alert h3 { margin:0; color:#7a3518; }
+.overdue-alert p:not(.eyebrow) { margin:7px 0 0; color:#765744; }
+.overdue-alert-actions { display:flex; gap:10px; }
+.overdue-alert-actions button { min-width:190px; background:#a94520; text-align:left; }
+.overdue-alert-actions strong,.overdue-alert-actions span,.overdue-alert-actions small { display:block; }
+.overdue-alert-actions strong { font:700 28px Georgia,serif; }
+.overdue-alert-actions span { margin-top:2px; font-weight:800; }
+.overdue-alert-actions small { margin-top:5px; color:#ffe0ce; }
 .storage-card { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:22px 24px; border:1px solid var(--line); border-radius:14px; background:white; }
 .storage-details { flex:1; min-width:0; }
 .storage-card h3 { margin:0 0 8px; color:var(--navy); }
@@ -223,6 +232,6 @@ button:disabled { opacity:.65; cursor:wait; }
 
 @media (max-width:900px) { .document-summary { grid-template-columns:repeat(2,1fr); } }
 @media (max-width:1000px) { .dashboard-cards,.main-menu { grid-template-columns:repeat(3,1fr); } .quick-actions,.operation-strip,.receipt-row { grid-template-columns:repeat(2,1fr); } .receipt-row button { grid-column:1/-1; } }
-@media (max-width:900px) { .report-filters { grid-template-columns:repeat(2,1fr); } .case-document-card { grid-template-columns:1fr 1fr; } .case-document-actions { grid-column:1/-1; justify-content:flex-start; } }
+@media (max-width:900px) { .report-filters { grid-template-columns:repeat(2,1fr); } .overdue-alert { align-items:flex-start; flex-direction:column; } .overdue-alert-actions { width:100%; } .overdue-alert-actions button { flex:1; } .case-document-card { grid-template-columns:1fr 1fr; } .case-document-actions { grid-column:1/-1; justify-content:flex-start; } }
 @media (max-width:800px) { .workspace-grid { grid-template-columns:1fr; } }
-@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .panel,.case-modal { padding:23px; } .page-heading,.scanner-heading,.welcome-card,.storage-card,.reports-heading,.archived-heading,.receipt-heading,.users-heading,.documents-heading { align-items:flex-start; } .session-box { width:100%; } .page-heading h1 { font-size:34px; } .main-menu { grid-template-columns:repeat(2,1fr); } .scan-form,.scan-modes,.quick-rejection,.movement-fields,.movement-actions,.document-filters,.report-filters,.case-document-card,.quick-actions,.operation-strip,.receipt-row,.catalogs-grid,.users-grid,.user-list-row,.deed-fields { grid-template-columns:1fr; } .document-row,.welcome-card,.storage-card,.reports-heading,.archived-heading,.receipt-heading,.users-heading,.documents-heading,.document-row-main { align-items:flex-start; flex-direction:column; } .row-actions,.document-row button,.welcome-card button,.storage-card button,.welcome-actions,.welcome-actions button,.report-actions,.report-actions button,.case-document-actions,.case-document-actions button,.receipt-row button { width:100%; } .dashboard-cards { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:700px) { .site-header { padding:0 18px; } .login-shell { grid-template-columns:1fr; gap:28px; padding:36px 0; } .panel,.case-modal { padding:23px; } .page-heading,.scanner-heading,.welcome-card,.storage-card,.reports-heading,.archived-heading,.receipt-heading,.users-heading,.documents-heading { align-items:flex-start; } .session-box { width:100%; } .page-heading h1 { font-size:34px; } .main-menu { grid-template-columns:repeat(2,1fr); } .scan-form,.scan-modes,.quick-rejection,.movement-fields,.movement-actions,.document-filters,.report-filters,.case-document-card,.quick-actions,.operation-strip,.receipt-row,.catalogs-grid,.users-grid,.user-list-row,.deed-fields { grid-template-columns:1fr; } .document-row,.welcome-card,.storage-card,.reports-heading,.archived-heading,.receipt-heading,.users-heading,.documents-heading,.document-row-main { align-items:flex-start; flex-direction:column; } .overdue-alert-actions { flex-direction:column; } .row-actions,.document-row button,.welcome-card button,.storage-card button,.welcome-actions,.welcome-actions button,.overdue-alert-actions button,.report-actions,.report-actions button,.case-document-actions,.case-document-actions button,.receipt-row button { width:100%; } .dashboard-cards { grid-template-columns:repeat(2,1fr); } }
