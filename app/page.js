@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { createClient } from "@/lib/supabase/client";
+import SectionErrorBoundary from "./section-error-boundary";
 
 const supabase = createClient();
 const DEFAULT_DOCUMENT_TYPES = [
@@ -1284,6 +1285,7 @@ export default function HomePage() {
         <datalist id="auxiliary-options">{availableAuxiliaries.map((name) => <option key={name} value={name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Guardar expediente"}</button>
       </form>
+      <SectionErrorBoundary render={() => (
       <form className="panel case-panel" onSubmit={createDocument}>
         <div><h2>Agregar documento</h2><p>Elige el expediente y captura los datos. Puedes agregar varias veces el mismo tipo de documento.</p></div>
         <label>Buscar expediente<input list="case-files" value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Escribe parte del número" required /></label>
@@ -1309,6 +1311,7 @@ export default function HomePage() {
         <datalist id="agency-options">{availableAgencies.map((name) => <option key={name} value={name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</button>
       </form>
+      )} />
       </div>
       </>}
       {message && <div className={`notice page-notice ${message.type}`}>{message.text}</div>}
