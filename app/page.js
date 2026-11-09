@@ -20,7 +20,7 @@ const ROLE_LABELS = {
   empleado: "Empleado",
   consulta: "Consulta",
 };
-const DOCUMENT_SELECT = "id, qr_token, label, lawyer_id, folio_forma, municipality, cadastral_file_number, deed_entries, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)";
+const DOCUMENT_SELECT = "id, qr_token, label, lawyer_id, folio_forma, municipality, cadastral_file_number, deed_entries, status, last_movement_at, archived_at, case_files(number, auxiliary), document_types(name), agencies(name)";
 const LEGACY_DOCUMENT_SELECT = "id, qr_token, label, status, last_movement_at, archived_at, case_files(number), document_types(name), agencies(name)";
 const REPORT_MOVEMENT_SELECT = "id, status, occurred_at, receipt_number, documents!inner(id, label, status, archived_at, case_files(number), document_types(name), agencies(name))";
 
@@ -101,6 +101,18 @@ async function fetchDocuments(archived = false) {
     })),
     error: null,
   };
+}
+
+async function fetchCaseFiles() {
+  const fetchWithSelect = (select) => fetchAllPages((from, to) => supabase
+    .from("case_files")
+    .select(select)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to));
+  const result = await fetchWithSelect("id, number, auxiliary");
+  if (!result.error) return result;
+  return fetchWithSelect("id, number");
 }
 
 function usernameToEmail(username) {
@@ -227,6 +239,7 @@ export default function HomePage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [number, setNumber] = useState("");
+  const [auxiliary, setAuxiliary] = useState("");
   const [caseFiles, setCaseFiles] = useState([]);
   const [caseSearch, setCaseSearch] = useState("");
   const [documentType, setDocumentType] = useState("");
@@ -270,6 +283,8 @@ export default function HomePage() {
   const [reportStart, setReportStart] = useState("");
   const [reportEnd, setReportEnd] = useState("");
   const [reportCase, setReportCase] = useState("");
+  const [reportLawyer, setReportLawyer] = useState("");
+  const [reportAuxiliary, setReportAuxiliary] = useState("");
   const [reportDaySort, setReportDaySort] = useState("");
   const [casePreview, setCasePreview] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
@@ -312,7 +327,7 @@ export default function HomePage() {
     if (!session) return;
 
     Promise.all([
-      fetchAllPages((from, to) => supabase.from("case_files").select("id, number").order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
+      fetchCaseFiles(),
       supabase.from("document_types").select("id, name").order("name"),
       supabase.from("agencies").select("id, name").order("name"),
       supabase.from("lawyers").select("id, name").order("name"),
@@ -461,15 +476,16 @@ export default function HomePage() {
   async function createCaseFile(event) {
     event.preventDefault();
     const cleanNumber = number.trim();
+    const cleanAuxiliary = auxiliary.trim();
 
-    if (!cleanNumber) return;
+    if (!cleanNumber || !cleanAuxiliary) return;
 
     setBusy(true);
     setMessage(null);
     const { data, error } = await supabase
       .from("case_files")
-      .insert({ number: cleanNumber })
-      .select("id, number")
+      .insert({ number: cleanNumber, auxiliary: cleanAuxiliary })
+      .select("id, number, auxiliary")
       .single();
     setBusy(false);
 
@@ -487,6 +503,7 @@ export default function HomePage() {
     }
 
     setNumber("");
+    setAuxiliary("");
     setCaseFiles((current) => [data, ...current]);
     setCaseSearch(data.number);
     setMessage({ type: "success", text: `Expediente ${cleanNumber} guardado correctamente.` });
@@ -1029,7 +1046,7 @@ export default function HomePage() {
   }
 
   function exportReportToExcel() {
-    const headers = ["Último movimiento", "Días en estatus", "Expediente", "Documento", "Folio forma", "Municipio", "No. de Exp. Catastral", "Abogado", "Dependencia", "Estatus actual", "Número de boleta", "Quién recibe", "Firma"];
+    const headers = ["Último movimiento", "Días en estatus", "Expediente", "Auxiliar", "Documento", "Folio forma", "Municipio", "No. de Exp. Catastral", "Abogado", "Dependencia", "Estatus actual", "Número de boleta", "Quién recibe", "Firma"];
     const safeCsvCell = (value) => {
       let text = String(value ?? "");
       if (/^[=+\-@]/.test(text)) text = `'${text}`;
@@ -1039,6 +1056,7 @@ export default function HomePage() {
       new Date(movement.occurred_at).toLocaleString("es-MX"),
       elapsedDays(movement.occurred_at, currentTime),
       movement.documents?.case_files?.number,
+      movement.documents?.case_files?.auxiliary || "",
       movement.documents ? formatDocumentName(movement.documents) : "",
       deedColumn(movement.documents, "folio_forma"),
       deedColumn(movement.documents, "municipality"),
@@ -1062,9 +1080,9 @@ export default function HomePage() {
   function openPrintableReport(autoPrint) {
     const popup = window.open("", "_blank", "width=1100,height=750");
     if (!popup) return;
-    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${elapsedDays(movement.occurred_at, currentTime)}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(deedColumn(movement.documents, "folio_forma") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "municipality") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "cadastral_file_number") || "—")}</td><td>${escapeHtml(movement.documents?.lawyers?.name || "—")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td><td class="signature-line"></td><td class="signature-line"></td></tr>`).join("");
-    const filters = [reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`].filter(Boolean).join(" · ") || "Todos los movimientos";
-    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>@page{size:landscape;margin:8mm}body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:9px}th,td{padding:7px 5px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}.signature-line{min-width:75px;border-bottom:1px solid #17232d}@media print{.toolbar{display:none}body{margin:8mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th><th>Quién recibe</th><th>Firma</th></tr></thead><tbody>${rows || '<tr><td colspan="13">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
+    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${elapsedDays(movement.occurred_at, currentTime)}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents?.case_files?.auxiliary || "—")}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(deedColumn(movement.documents, "folio_forma") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "municipality") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "cadastral_file_number") || "—")}</td><td>${escapeHtml(movement.documents?.lawyers?.name || "—")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td><td class="signature-line"></td><td class="signature-line"></td></tr>`).join("");
+    const filters = [reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`, reportLawyer && `Abogado: ${lawyers.find(({ id }) => id === reportLawyer)?.name}`, reportAuxiliary && `Auxiliar: ${reportAuxiliary}`].filter(Boolean).join(" · ") || "Todos los movimientos";
+    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>@page{size:landscape;margin:8mm}body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:9px}th,td{padding:7px 5px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}.signature-line{min-width:75px;border-bottom:1px solid #17232d}@media print{.toolbar{display:none}body{margin:8mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Auxiliar</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th><th>Quién recibe</th><th>Firma</th></tr></thead><tbody>${rows || '<tr><td colspan="14">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
     popup.document.close();
   }
 
@@ -1116,6 +1134,7 @@ export default function HomePage() {
   const canManageUsers = canManageAll;
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)].filter((name) => !isObsoleteAgencyName(name)))].sort((a, b) => a.localeCompare(b, "es"));
+  const availableAuxiliaries = [...new Set(caseFiles.map(({ auxiliary: name }) => name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
   // El reporte y el panel deben partir de la misma lista de documentos actuales.
   // Usar el historial como fuente hacía que faltaran documentos cuando la consulta
   // de movimientos alcanzaba el límite de filas de Supabase.
@@ -1136,6 +1155,8 @@ export default function HomePage() {
       && (!reportEnd || movementDate <= reportEnd)
       && (!reportStatus || movement.documents.status === reportStatus)
       && (!reportType || movement.documents?.document_types?.name === reportType)
+      && (!reportLawyer || movement.documents?.lawyer_id === reportLawyer)
+      && (!reportAuxiliary || movement.documents?.case_files?.auxiliary === reportAuxiliary)
       && (!reportCase.trim() || caseNumber.toLocaleLowerCase("es-MX").includes(reportCase.trim().toLocaleLowerCase("es-MX")));
   });
   const filteredReportDocuments = sortByElapsedTime(matchingReportDocuments, reportDaySort, (movement) => movement.occurred_at, currentTime);
@@ -1227,6 +1248,8 @@ export default function HomePage() {
           <p>Escribe el número exactamente como aparece en tu otro programa.</p>
         </div>
         <label>Número de expediente<input value={number} onChange={(event) => setNumber(event.target.value)} placeholder="Ejemplo: 2548/2026" autoFocus required /></label>
+        <label>Auxiliar<input list="auxiliary-options" value={auxiliary} onChange={(event) => setAuxiliary(event.target.value)} placeholder="Nombre del auxiliar" maxLength="120" required /></label>
+        <datalist id="auxiliary-options">{availableAuxiliaries.map((name) => <option key={name} value={name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Guardar expediente"}</button>
       </form>
       <form className="panel case-panel" onSubmit={createDocument}>
@@ -1349,11 +1372,13 @@ export default function HomePage() {
           <label>Hasta<input type="date" value={reportEnd} onChange={(event) => setReportEnd(event.target.value)} /></label>
           <label>Estatus<select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}><option value="">Todos</option>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
           <label>Tipo de documento<select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">Todos</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+          <label>Abogado<select value={reportLawyer} onChange={(event) => setReportLawyer(event.target.value)}><option value="">Todos</option>{lawyers.map((lawyer) => <option key={lawyer.id} value={lawyer.id}>{lawyer.name}</option>)}</select></label>
+          <label>Auxiliar<select value={reportAuxiliary} onChange={(event) => setReportAuxiliary(event.target.value)}><option value="">Todos</option>{availableAuxiliaries.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
           <label>Ordenar por días<select value={reportDaySort} onChange={(event) => setReportDaySort(event.target.value)}><option value="">Orden original</option><option value="desc">Más días primero</option><option value="asc">Menos días primero</option></select></label>
         </div>
-        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th></tr></thead><tbody>
-          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td><strong>{elapsedDays(movement.occurred_at, currentTime)}</strong></td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{deedColumn(movement.documents, "folio_forma") || "—"}</td><td>{deedColumn(movement.documents, "municipality") || "—"}</td><td>{deedColumn(movement.documents, "cadastral_file_number") || "—"}</td><td>{movement.documents?.lawyers?.name || "—"}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
-          {filteredReportDocuments.length === 0 && <tr><td colSpan="11">No hay documentos que coincidan con estos filtros.</td></tr>}
+        <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Auxiliar</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th></tr></thead><tbody>
+          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td><strong>{elapsedDays(movement.occurred_at, currentTime)}</strong></td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents?.case_files?.auxiliary || "—"}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{deedColumn(movement.documents, "folio_forma") || "—"}</td><td>{deedColumn(movement.documents, "municipality") || "—"}</td><td>{deedColumn(movement.documents, "cadastral_file_number") || "—"}</td><td>{movement.documents?.lawyers?.name || "—"}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
+          {filteredReportDocuments.length === 0 && <tr><td colSpan="12">No hay documentos que coincidan con estos filtros.</td></tr>}
         </tbody></table></div>
       </section>}
 

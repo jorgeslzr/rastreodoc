@@ -61,6 +61,7 @@ create table if not exists public.municipalities (
 create table if not exists public.case_files (
   id uuid primary key default gen_random_uuid(),
   number citext not null unique check (length(trim(number::text)) > 0),
+  auxiliary text check (auxiliary is null or length(trim(auxiliary)) between 1 and 120),
   created_at timestamptz not null default now()
 );
 

@@ -160,7 +160,7 @@ button:disabled { opacity:.65; cursor:wait; }
 .reports-heading h2 { margin:0; color:var(--navy); }
 .reports-heading > strong { color:var(--blue); }
 .report-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
-.report-filters { display:grid; grid-template-columns:1.3fr repeat(2,1fr) 1fr 1.5fr 1.2fr; gap:12px; margin:20px 0; }
+.report-filters { display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:12px; margin:20px 0; }
 .report-filters label { margin:0; }
 .report-table-wrap { overflow:auto; }
 .report-table { width:100%; border-collapse:collapse; font-size:14px; }
