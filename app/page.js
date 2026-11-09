@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import SectionErrorBoundary from "./section-error-boundary";
 
 const supabase = createClient();
 const DEFAULT_DOCUMENT_TYPES = [
@@ -316,9 +317,7 @@ export default function HomePage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
-      return;
-    }
+    if (!isSupabaseConfigured) return undefined;
 
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -1110,7 +1109,7 @@ export default function HomePage() {
   }
 
   if (!isSupabaseConfigured) {
-    return <main className="center-shell"><section className="panel"><p className="eyebrow">CONFIGURACIÓN PENDIENTE</p><h1>Falta conectar Supabase</h1><p>Agrega <code>NEXT_PUBLIC_SUPABASE_URL</code> y <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> al entorno de este despliegue en Vercel y vuelve a desplegar.</p></section></main>;
+    return <main className="center-shell"><section className="panel"><h1>Falta configurar Supabase</h1><p>Agrega en Vercel las variables NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY para este ambiente y vuelve a desplegar.</p></section></main>;
   }
 
   if (loadingSession) {
@@ -1284,6 +1283,7 @@ export default function HomePage() {
         <datalist id="auxiliary-options">{availableAuxiliaries.map((name) => <option key={name} value={name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Guardar expediente"}</button>
       </form>
+      <SectionErrorBoundary render={() => (
       <form className="panel case-panel" onSubmit={createDocument}>
         <div><h2>Agregar documento</h2><p>Elige el expediente y captura los datos. Puedes agregar varias veces el mismo tipo de documento.</p></div>
         <label>Buscar expediente<input list="case-files" value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Escribe parte del número" required /></label>
@@ -1309,6 +1309,7 @@ export default function HomePage() {
         <datalist id="agency-options">{availableAgencies.map((name) => <option key={name} value={name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</button>
       </form>
+      )} />
       </div>
       </>}
       {message && <div className={`notice page-notice ${message.type}`}>{message.text}</div>}
