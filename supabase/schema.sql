@@ -52,6 +52,12 @@ create table if not exists public.lawyers (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.auxiliaries (
+  id uuid primary key default gen_random_uuid(),
+  name citext not null unique check (length(trim(name::text)) > 0),
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.municipalities (
   id uuid primary key default gen_random_uuid(),
   name citext not null unique check (length(trim(name::text)) > 0),
@@ -71,6 +77,7 @@ create table if not exists public.documents (
   document_type_id uuid not null references public.document_types(id) on delete restrict,
   agency_id uuid not null references public.agencies(id) on delete restrict,
   lawyer_id uuid references public.lawyers(id) on delete restrict,
+  auxiliary_id uuid references public.auxiliaries(id) on delete restrict,
   label text,
   folio_forma text,
   municipality text,
@@ -93,6 +100,7 @@ create table if not exists public.documents (
 );
 
 create index if not exists documents_case_file_id_idx on public.documents(case_file_id);
+create index if not exists documents_auxiliary_id_idx on public.documents(auxiliary_id);
 create index if not exists documents_status_idx on public.documents(status);
 create index if not exists documents_agency_id_idx on public.documents(agency_id);
 
@@ -219,6 +227,7 @@ alter table public.profiles enable row level security;
 alter table public.agencies enable row level security;
 alter table public.document_types enable row level security;
 alter table public.lawyers enable row level security;
+alter table public.auxiliaries enable row level security;
 alter table public.municipalities enable row level security;
 alter table public.case_files enable row level security;
 alter table public.documents enable row level security;
@@ -238,6 +247,10 @@ for all to authenticated using (true) with check (true);
 
 drop policy if exists "authenticated_lawyers" on public.lawyers;
 create policy "authenticated_lawyers" on public.lawyers
+for all to authenticated using (true) with check (true);
+
+drop policy if exists "authenticated_auxiliaries" on public.auxiliaries;
+create policy "authenticated_auxiliaries" on public.auxiliaries
 for all to authenticated using (true) with check (true);
 
 drop policy if exists "authenticated_municipalities" on public.municipalities;
@@ -261,12 +274,12 @@ create policy "authenticated_movements_insert" on public.movements
 for insert to authenticated with check (created_by = auth.uid());
 
 revoke all on public.profiles from anon;
-revoke all on public.agencies, public.document_types, public.lawyers, public.municipalities, public.case_files,
+revoke all on public.agencies, public.document_types, public.lawyers, public.auxiliaries, public.municipalities, public.case_files,
   public.documents, public.movements from anon;
 
 grant select on public.profiles to authenticated;
 grant select, insert on public.agencies, public.document_types, public.case_files to authenticated;
-grant select, insert, delete on public.lawyers, public.municipalities to authenticated;
+grant select, insert, delete on public.lawyers, public.auxiliaries, public.municipalities to authenticated;
 grant select, insert, update on public.documents to authenticated;
 grant select, insert on public.movements to authenticated;
 grant usage, select on sequence public.movements_id_seq to authenticated;
