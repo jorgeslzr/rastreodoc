@@ -250,6 +250,7 @@ export default function HomePage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [number, setNumber] = useState("");
+  const [auxiliary, setAuxiliary] = useState("");
   const [caseFiles, setCaseFiles] = useState([]);
   const [caseSearch, setCaseSearch] = useState("");
   const [documentType, setDocumentType] = useState("");
@@ -493,15 +494,16 @@ export default function HomePage() {
   async function createCaseFile(event) {
     event.preventDefault();
     const cleanNumber = number.trim();
+    const cleanAuxiliary = auxiliary.trim();
 
-    if (!cleanNumber) return;
+    if (!cleanNumber || !cleanAuxiliary) return;
 
     setBusy(true);
     setMessage(null);
     const { data, error } = await supabase
       .from("case_files")
-      .insert({ number: cleanNumber })
-      .select("id, number")
+      .insert({ number: cleanNumber, auxiliary: cleanAuxiliary })
+      .select("id, number, auxiliary")
       .single();
     setBusy(false);
 
@@ -519,6 +521,7 @@ export default function HomePage() {
     }
 
     setNumber("");
+    setAuxiliary("");
     setCaseFiles((current) => [data, ...current]);
     setCaseSearch(data.number);
     setMessage({ type: "success", text: `Expediente ${cleanNumber} guardado correctamente.` });
@@ -1048,10 +1051,10 @@ export default function HomePage() {
   async function restoreDocument(document) {
     setBusy(true);
     setMessage(null);
-    const { error } = await supabase.from("documents").update({ archived_at: null }).eq("id", document.id);
+    const { data: restored, error } = await supabase.rpc("restore_archived_document", { target_document_id: document.id });
     setBusy(false);
 
-    if (error) {
+    if (error || !restored) {
       setMessage({ type: "error", text: "No fue posible restaurar el documento." });
       return;
     }
@@ -1276,6 +1279,8 @@ export default function HomePage() {
           <p>Escribe el número exactamente como aparece en tu otro programa.</p>
         </div>
         <label>Número de expediente<input value={number} onChange={(event) => setNumber(event.target.value)} placeholder="Ejemplo: 2548/2026" autoFocus required /></label>
+        <label>Auxiliar<input list="auxiliary-options" value={auxiliary} onChange={(event) => setAuxiliary(event.target.value)} placeholder="Nombre del auxiliar" maxLength="120" required /></label>
+        <datalist id="auxiliary-options">{availableAuxiliaries.map((name) => <option key={name} value={name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Guardar expediente"}</button>
       </form>
       <SectionErrorBoundary render={() => (
