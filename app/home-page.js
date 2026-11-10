@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import SectionErrorBoundary from "./section-error-boundary";
+import { refreshAfterSave, scanLookupMessage } from "@/lib/operation-feedback.mjs";
+import { createDocumentOperationClient, documentOperationArguments } from "@/lib/document-operations.mjs";
 
 const supabase = createClient();
 const DEFAULT_DOCUMENT_TYPES = [
@@ -316,6 +318,18 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const [storageUsage, setStorageUsage] = useState(null);
   const [storageError, setStorageError] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pendingSave, setPendingSave] = useState(null);
+  const [processingScan, setProcessingScan] = useState(false);
+  const [operationClient] = useState(() => createDocumentOperationClient(
+    (args) => supabase.rpc("save_document_operation", args).abortSignal(AbortSignal.timeout(20000)),
+  ));
+  const scanInFlight = useRef(false);
+  const reportRefreshVersion = useRef(0);
+  const documentSaveBlocked = busy || processingScan || Boolean(pendingSave);
+
+  useEffect(() => {
+    if (activeView === "escanear" && !documentSaveBlocked) scanInputRef.current?.focus();
+  }, [activeView, documentSaveBlocked]);
 
   function openView(view) {
     if (view === "alta" && window.location.pathname !== "/alta") {
@@ -382,11 +396,22 @@ export default function HomePage({ initialView = "panel" } = {}) {
       setDocuments((documentResult.data ?? []).map(attachCatalogs));
       setArchivedDocuments((archivedResult.data ?? []).map(attachCatalogs));
       setReportMovements(movementResult.data ?? []);
-      const loadError = documentResult.error ?? archivedResult.error ?? caseResult.error;
+      const loadError = [caseResult, typeResult, agencyResult, lawyerResult, auxiliaryResult, municipalityResult, profileResult, documentResult, archivedResult, movementResult].find((result) => result.error)?.error;
       if (loadError) setMessage({ type: "error", text: "No fue posible cargar toda la información. Recarga la página; si continúa, revisa que las migraciones estén aplicadas." });
       if (sessionProfile?.role === "admin") refreshStorageUsage();
     });
   }, [session]);
+
+  async function refreshReportAfterSave(successText) {
+    const version = ++reportRefreshVersion.current;
+    setMessage({ type: "success", text: successText });
+    await refreshAfterSave(fetchReportMovements, setReportMovements, () => {
+      setMessage({
+        type: "error",
+        text: `${successText} No se pudo actualizar el reporte. Los datos del reporte pueden estar desactualizados; recarga la página. No repitas la operación.`,
+      });
+    }, () => reportRefreshVersion.current === version);
+  }
 
   async function refreshStorageUsage() {
     setStorageError(false);
@@ -402,6 +427,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   async function signIn(event) {
     event.preventDefault();
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
 
     const { error } = await supabase.auth.signInWithPassword({ email: usernameToEmail(email), password });
@@ -415,6 +441,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   async function createSystemUser(event) {
     event.preventDefault();
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
     const { data: sessionData } = await supabase.auth.getSession();
     const response = await fetch("/api/users", {
@@ -451,6 +478,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     if (!confirmed) return;
 
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
     const { data: sessionData } = await supabase.auth.getSession();
     const response = await fetch("/api/users", {
@@ -478,6 +506,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     if (!confirmed) return;
 
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
     const { data: sessionData } = await supabase.auth.getSession();
     const response = await fetch("/api/users", {
@@ -507,6 +536,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     if (!cleanNumber) return;
 
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
     const { data, error } = await supabase
       .from("case_files")
@@ -571,6 +601,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     }
 
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
     const record = await findOrCreate(table, cleanName);
     setBusy(false);
@@ -590,6 +621,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     if (!confirmed) return;
 
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
     const { error } = await supabase.from(table).delete().eq("id", record.id);
     setBusy(false);
@@ -618,6 +650,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     if (!documentType.trim() || !agency.trim() || !lawyerId || !auxiliaryId) return;
 
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
     const [typeRecord, agencyRecord] = await Promise.all([
       findOrCreate("document_types", documentType),
@@ -667,9 +700,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     setAgency("");
     setLawyerId("");
     setAuxiliaryId("");
-    setMessage({ type: "success", text: "Documento agregado con estatus LISTO PARA ENVIAR." });
-    const { data: refreshedMovements } = await fetchReportMovements();
-    setReportMovements(refreshedMovements ?? []);
+    await refreshReportAfterSave("Documento agregado con estatus LISTO PARA ENVIAR.");
   }
 
   async function showQr(document) {
@@ -718,34 +749,119 @@ export default function HomePage({ initialView = "panel" } = {}) {
     setSelectedQrIds((current) => current.includes(documentId) ? current.filter((id) => id !== documentId) : [...current, documentId]);
   }
 
+  function applyServerDocument(saved, original) {
+    const merged = { ...original, ...saved };
+    setDocuments((current) => {
+      if (saved.archived_at) return current.filter(({ id }) => id !== saved.id);
+      if (current.some(({ id }) => id === saved.id)) {
+        return current.map((item) => item.id === saved.id ? { ...item, ...saved } : item);
+      }
+      return merged.case_files ? [merged, ...current] : current;
+    });
+    setArchivedDocuments((current) => {
+      if (!saved.archived_at) return current.filter(({ id }) => id !== saved.id);
+      if (current.some(({ id }) => id === saved.id)) {
+        return current.map((item) => item.id === saved.id ? { ...item, ...saved } : item);
+      }
+      return merged.case_files ? [merged, ...current] : current;
+    });
+    setScannedDocument((current) => current?.id === saved.id
+      ? (saved.archived_at ? null : { ...current, ...saved }) : current);
+  }
+
+  async function persistDocumentChange(document, changes, retry = false) {
+    if (operationClient.isInFlight()) return null;
+    setBusy(true);
+    reportRefreshVersion.current += 1;
+    setMessage(null);
+    try {
+      const result = retry ? await operationClient.retry()
+        : await operationClient.save(documentOperationArguments(document, changes));
+      if (result.kind === "saved") {
+        setPendingSave(null);
+        applyServerDocument(result.data.document, document);
+        return result.data;
+      }
+      if (["uncertain", "pending"].includes(result.kind)) {
+        setPendingSave((current) => current ?? { document });
+        setMessage({ type: "error", text: "No se pudo confirmar el guardado. El cambio podría haberse registrado. Usa Verificar guardado para comprobar la misma operación antes de continuar." });
+      } else if (result.kind === "conflict") {
+        setPendingSave(null);
+        // Reload the document, but require the user to review the new state.
+        let refreshed = false;
+        try {
+          const { data, error } = await supabase.from("documents")
+            .select(DOCUMENT_SELECT).eq("id", document.id).maybeSingle()
+            .abortSignal(AbortSignal.timeout(20000));
+          if (!error && data) {
+            applyServerDocument(data, document);
+            refreshed = true;
+          }
+        } catch { /* The conflict is still reported if the refresh fails. */ }
+        if (editPreview?.id === document.id) setEditPreview(null);
+        setMessage({ type: "error", text: refreshed
+          ? "El documento cambió desde que lo abriste. Se actualizó su información; revísala antes de intentar otro cambio. Esta operación no se guardó."
+          : "El documento cambió desde que lo abriste y no pudimos actualizar su información. Recarga la página y revisa su historial antes de continuar. Esta operación no se guardó." });
+      } else if (result.kind === "invalid") {
+        setPendingSave(null);
+        setMessage({ type: "error", text: result.error.message || "Revisa los datos de la operación. No se guardó ningún cambio." });
+      } else if (result.kind === "unavailable") {
+        setPendingSave(null);
+        setMessage({ type: "error", text: "El guardado no está disponible o la sesión requiere iniciar de nuevo. No se guardó ningún cambio. Si continúa, comunícalo al administrador." });
+      }
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifyPendingSave() {
+    if (!pendingSave) return;
+    const result = await persistDocumentChange(pendingSave.document, null, true);
+    if (!result) return;
+    setReceiptDrafts((current) => ({ ...current, [result.document.id]: "" }));
+    setReceiptNumber("");
+    setRejectionReason("");
+    setMovementNotes("");
+    setManualMovementReady(false);
+    setEditPreview(null);
+    await refreshReportAfterSave(`Guardado confirmado. Estatus actual: ${formatStatus(result.document.status)}.`);
+  }
+
   async function scanDocument(event) {
     event.preventDefault();
+    if (scanInFlight.current || operationClient.isInFlight() || operationClient.hasPending()) return;
     const token = normalizeScannedToken(scanToken);
     if (!token) return;
-
+    scanInFlight.current = true;
+    setProcessingScan(true);
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
-    const { data, error } = await supabase
-      .from("documents")
-      .select(DOCUMENT_SELECT)
-      .eq("qr_token", token)
-      .is("archived_at", null)
-      .maybeSingle();
-    setBusy(false);
-
-    if (error || !data) {
-      setScannedDocument(null);
-      setMessage({ type: "error", text: "No encontramos un documento con este código QR." });
-      return;
+    try {
+      let result;
+      try {
+        result = await supabase.from("documents").select(DOCUMENT_SELECT)
+          .eq("qr_token", token).is("archived_at", null).maybeSingle()
+          .abortSignal(AbortSignal.timeout(20000));
+      } catch {
+        result = { data: null, error: { message: "Consulta interrumpida" } };
+      }
+      const { data, error } = result;
+      if (error || !data) {
+        setScannedDocument(null);
+        setMessage({ type: "error", text: scanLookupMessage(error, data) });
+        return;
+      }
+      setScannedDocument(data);
+      setManualMovementReady(false);
+      setScanToken("");
+      if (scanMode) await registerMovement(scanMode, data);
+    } finally {
+      scanInFlight.current = false;
+      setProcessingScan(false);
+      setBusy(false);
     }
-
-    setScannedDocument(data);
-    setManualMovementReady(false);
-    setScanToken("");
-    if (scanMode) {
-      await registerMovement(scanMode, data);
-    }
-    scanInputRef.current?.focus();
   }
 
   function confirmSensitiveMovement(status, document) {
@@ -754,6 +870,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }
 
   function activateScanMode(status) {
+    if (scanInFlight.current || operationClient.isInFlight() || operationClient.hasPending()) return;
     if (scanMode === status) {
       setScanMode("");
       setManualMovementReady(false);
@@ -772,62 +889,27 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }
 
   async function registerMovement(status, targetDocument = scannedDocument) {
-    if (!targetDocument) return;
+    if (!targetDocument || operationClient.isInFlight()) return;
     if (!scanMode && !confirmSensitiveMovement(status, targetDocument)) return;
-    setBusy(true);
-    setMessage(null);
-
     if (status === "ENVIADO" && !isIsaiDocument(targetDocument) && !receiptNumber.trim()) {
-      setBusy(false);
       setMessage({ type: "error", text: "Escribe el número de boleta antes de registrar el envío." });
       return;
     }
-
-    let resolvedStatus = status;
-    if (status === "ENVIADO") {
-      const { data: previousSends, error: historyError } = await supabase
-        .from("movements")
-        .select("id")
-        .eq("document_id", targetDocument.id)
-        .in("status", ["ENVIADO", "REENVIADO"])
-        .limit(1);
-
-      if (historyError) {
-        setBusy(false);
-        setMessage({ type: "error", text: "No fue posible comprobar los envíos anteriores." });
-        return;
-      }
-
-      if (previousSends.length > 0) resolvedStatus = "REENVIADO";
-    }
-
-    const { error } = await supabase.from("movements").insert({
-      document_id: targetDocument.id,
-      status: resolvedStatus,
-      rejection_reason: resolvedStatus === "RECHAZADO" ? rejectionReason.trim() || null : null,
+    const result = await persistDocumentChange(targetDocument, {
+      status,
+      rejectionReason: status === "RECHAZADO" ? rejectionReason.trim() || null : null,
       notes: movementNotes.trim() || null,
-      receipt_number: ["ENVIADO", "REENVIADO"].includes(resolvedStatus) && !isIsaiDocument(targetDocument) ? receiptNumber.trim() || null : null,
-      created_by: session.user.id,
+      receiptNumber: ["ENVIADO", "REENVIADO"].includes(status) && !isIsaiDocument(targetDocument)
+        ? receiptNumber.trim() || null : null,
     });
-    setBusy(false);
-
-    if (error) {
-      setMessage({ type: "error", text: "No fue posible registrar el movimiento." });
-      return;
-    }
-
-    const updated = { ...targetDocument, status: resolvedStatus, last_movement_at: new Date().toISOString() };
-    setScannedDocument(updated);
-    setDocuments((current) => current.map((document) => document.id === updated.id ? { ...document, status: resolvedStatus, last_movement_at: updated.last_movement_at } : document));
+    if (!result) return;
     if (!scanMode) {
       setRejectionReason("");
       setMovementNotes("");
     }
-    if (["ENVIADO", "REENVIADO"].includes(resolvedStatus)) setReceiptNumber("");
-    setMessage({ type: "success", text: `Movimiento registrado: ${formatStatus(resolvedStatus)}.` });
+    if (["ENVIADO", "REENVIADO"].includes(result.recorded_status)) setReceiptNumber("");
     setManualMovementReady(false);
-    const { data: refreshedMovements } = await fetchReportMovements();
-    setReportMovements(refreshedMovements ?? []);
+    await refreshReportAfterSave(`Movimiento registrado: ${formatStatus(result.recorded_status)}.`);
   }
 
   async function registerReceiptSend(document) {
@@ -836,121 +918,25 @@ export default function HomePage({ initialView = "panel" } = {}) {
       setMessage({ type: "error", text: "Escribe el número de boleta antes de marcar el documento como enviado." });
       return;
     }
-
-    setBusy(true);
-    setMessage(null);
-    const { data: previousSends, error: historyError } = await supabase
-      .from("movements")
-      .select("id")
-      .eq("document_id", document.id)
-      .in("status", ["ENVIADO", "REENVIADO"])
-      .limit(1);
-
-    if (historyError) {
-      setBusy(false);
-      setMessage({ type: "error", text: "No fue posible comprobar si el documento ya había sido enviado." });
-      return;
-    }
-
-    const resolvedStatus = previousSends.length > 0 ? "REENVIADO" : "ENVIADO";
-    const { error } = await supabase.from("movements").insert({
-      document_id: document.id,
-      status: resolvedStatus,
-      receipt_number: cleanReceipt || null,
+    const result = await persistDocumentChange(document, {
+      status: "ENVIADO",
+      receiptNumber: cleanReceipt || null,
       notes: isIsaiDocument(document) ? "Envío de ISAI sin número de boleta" : "Captura de boleta sin escaneo QR",
-      created_by: session.user.id,
     });
-    setBusy(false);
-
-    if (error) {
-      setMessage({ type: "error", text: "No fue posible guardar la boleta." });
-      return;
-    }
-
-    setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: resolvedStatus, last_movement_at: new Date().toISOString() } : item));
+    if (!result) return;
     setReceiptDrafts((current) => ({ ...current, [document.id]: "" }));
-    setMessage({ type: "success", text: `Boleta guardada. Documento marcado como ${formatStatus(resolvedStatus)}.` });
-    const { data: refreshedMovements } = await fetchReportMovements();
-    setReportMovements(refreshedMovements ?? []);
-    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
+    await refreshReportAfterSave(`Boleta guardada. Documento marcado como ${formatStatus(result.recorded_status)}.`);
   }
 
   async function markRejectedDocumentReady(document) {
+    if (operationClient.isInFlight()) return;
     const confirmed = window.confirm(`¿Marcar ${formatDocumentName(document)} del expediente ${document.case_files.number} como listo para enviar nuevamente?`);
     if (!confirmed) return;
-    setBusy(true);
-    setMessage(null);
-
-    const { error } = await supabase.from("movements").insert({
-      document_id: document.id,
-      status: "EN_OFICINA",
-      notes: "Documento corregido y listo para reenviar",
-      created_by: session.user.id,
+    const result = await persistDocumentChange(document, {
+      status: "EN_OFICINA", notes: "Documento corregido y listo para reenviar",
     });
-    setBusy(false);
-
-    if (error) {
-      setMessage({ type: "error", text: "No fue posible marcar el documento como listo para enviar." });
-      return;
-    }
-
-    const lastMovementAt = new Date().toISOString();
-    setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await fetchReportMovements();
-    setReportMovements(refreshedMovements ?? []);
-    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
-  }
-
-  async function markRejectedDocumentReady(document) {
-    const confirmed = window.confirm(`¿Marcar ${formatDocumentName(document)} del expediente ${document.case_files.number} como listo para enviar nuevamente?`);
-    if (!confirmed) return;
-    setBusy(true);
-    setMessage(null);
-
-    const { error } = await supabase.from("movements").insert({
-      document_id: document.id,
-      status: "EN_OFICINA",
-      notes: "Documento corregido y listo para reenviar",
-      created_by: session.user.id,
-    });
-    setBusy(false);
-
-    if (error) {
-      setMessage({ type: "error", text: "No fue posible marcar el documento como listo para enviar." });
-      return;
-    }
-
-    const lastMovementAt = new Date().toISOString();
-    setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await fetchReportMovements();
-    setReportMovements(refreshedMovements ?? []);
-    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
-  }
-
-  async function markRejectedDocumentReady(document) {
-    const confirmed = window.confirm(`¿Marcar ${formatDocumentName(document)} del expediente ${document.case_files.number} como listo para enviar nuevamente?`);
-    if (!confirmed) return;
-    setBusy(true);
-    setMessage(null);
-
-    const { error } = await supabase.from("movements").insert({
-      document_id: document.id,
-      status: "EN_OFICINA",
-      notes: "Documento corregido y listo para reenviar",
-      created_by: session.user.id,
-    });
-    setBusy(false);
-
-    if (error) {
-      setMessage({ type: "error", text: "No fue posible marcar el documento como listo para enviar." });
-      return;
-    }
-
-    const lastMovementAt = new Date().toISOString();
-    setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, status: "EN_OFICINA", last_movement_at: lastMovementAt } : item));
-    const { data: refreshedMovements } = await fetchReportMovements();
-    setReportMovements(refreshedMovements ?? []);
-    setMessage({ type: "success", text: "Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO." });
+    if (!result) return;
+    await refreshReportAfterSave("Documento listo para enviar. Ya aparece en Boletas; al capturar su número se marcará como REINGRESADO.");
   }
 
   async function showHistory(document) {
@@ -971,16 +957,21 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }
 
   function prepareSend(document) {
+    if (operationClient.isInFlight() || operationClient.hasPending()) return;
     setScannedDocument(document);
     setScanMode("ENVIADO");
     setReceiptNumber("");
     setMovementNotes("");
     setManualMovementReady(true);
     setActiveView("escanear");
+    reportRefreshVersion.current += 1;
     setMessage(null);
   }
 
   function prepareCorrection(document) {
+    if (operationClient.isInFlight() || operationClient.hasPending()) return;
+    reportRefreshVersion.current += 1;
+    setMessage(null);
     setEditPreview(document);
     setCorrectedStatus(document.status);
     setCorrectedDocumentLabel(document.label ?? "");
@@ -989,7 +980,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function saveStatusCorrection(event) {
     event.preventDefault();
-    if (!editPreview || !correctedStatus) return;
+    if (!editPreview || !correctedStatus || operationClient.isInFlight()) return;
     const cleanLabel = correctedDocumentLabel.trim();
     const statusChanged = correctedStatus !== editPreview.status;
     const labelChanged = cleanLabel !== (editPreview.label?.trim() ?? "");
@@ -1000,44 +991,25 @@ export default function HomePage({ initialView = "panel" } = {}) {
     }
     const confirmed = window.confirm(`¿Guardar los cambios de ${formatDocumentName(editPreview)}?`);
     if (!confirmed) return;
-    setBusy(true);
-    setMessage(null);
-
-    const { error: labelError } = labelChanged
-      ? await supabase.from("documents").update({ label: cleanLabel || null }).eq("id", editPreview.id)
-      : { error: null };
-
-    let statusError = null;
-    if (!labelError && statusChanged) {
-      const note = correctionNote.trim()
-        ? `CORRECCIÓN DE CAPTURA: ${correctionNote.trim()}`
-        : "CORRECCIÓN DE CAPTURA";
-      const result = await supabase.from("movements").insert({
-        document_id: editPreview.id,
-        status: correctedStatus,
-        notes: note,
-        created_by: session.user.id,
-      });
-      statusError = result.error;
-    }
-    setBusy(false);
-
-    if (labelError || statusError) {
-      setMessage({ type: "error", text: "No fue posible guardar todos los cambios del documento." });
-      return;
-    }
-
-    setDocuments((current) => current.map((document) => document.id === editPreview.id ? { ...document, status: correctedStatus, label: cleanLabel || null } : document));
-    const { data: refreshedMovements } = await fetchReportMovements();
-    setReportMovements(refreshedMovements ?? []);
+    const note = correctionNote.trim()
+      ? `CORRECCIÓN DE CAPTURA: ${correctionNote.trim()}` : "CORRECCIÓN DE CAPTURA";
+    const result = await persistDocumentChange(editPreview, {
+      status: statusChanged ? correctedStatus : null,
+      changeLabel: labelChanged,
+      label: cleanLabel || null,
+      notes: note,
+      isCorrection: true,
+    });
+    if (!result) return;
     setEditPreview(null);
-    setMessage({ type: "success", text: "Cambios del documento guardados correctamente." });
+    await refreshReportAfterSave("Cambios del documento guardados correctamente.");
   }
 
   async function archiveDocument(document) {
     const confirmed = window.confirm(`Vas a archivar ${formatDocumentName(document)} del expediente ${document.case_files.number}. No se borrará el historial, solo se ocultará de la operación diaria. ¿Confirmas?`);
     if (!confirmed) return;
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
     const archivedAt = new Date().toISOString();
     const { error } = await supabase.from("documents").update({ archived_at: archivedAt }).eq("id", document.id);
@@ -1057,6 +1029,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function restoreDocument(document) {
     setBusy(true);
+    reportRefreshVersion.current += 1;
     setMessage(null);
     const { error } = await supabase.from("documents").update({ archived_at: null }).eq("id", document.id);
     setBusy(false);
@@ -1068,9 +1041,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
     setArchivedDocuments((current) => current.filter((item) => item.id !== document.id));
     setDocuments((current) => [{ ...document, archived_at: null }, ...current]);
-    const { data: restoredMovements } = await fetchReportMovements();
-    setReportMovements(restoredMovements ?? []);
-    setMessage({ type: "success", text: "Documento restaurado y disponible nuevamente." });
+    await refreshReportAfterSave("Documento restaurado y disponible nuevamente.");
   }
 
   function exportReportToExcel() {
@@ -1136,7 +1107,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
           <p>Utiliza el usuario que creaste en Supabase.</p>
           <label>Usuario o correo<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Ejemplo: supervisor" required /></label>
           <label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-          {message && <div className={`notice ${message.type}`}>{message.text}</div>}
+          {message && <div role="status" aria-live="polite" className={`notice ${message.type}`}>{message.text}</div>}
           <button type="submit" disabled={busy}>{busy ? "Ingresando…" : "Ingresar"}</button>
         </form>
       </main>
@@ -1317,7 +1288,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
       )} />
       </div>
       </>}
-      {message && <div className={`notice page-notice ${message.type}`}>{message.text}</div>}
+      {message && <div role="status" aria-live="polite" className={`notice page-notice ${message.type}`}>{message.text}</div>}
+      {pendingSave && <div className="page-notice"><button className="secondary" onClick={verifyPendingSave} disabled={busy}>{busy ? "Verificando…" : "Verificar guardado"}</button></div>}
 
       {activeView === "boletas" && <section className="receipt-section standalone">
         <div className="receipt-heading">
@@ -1330,8 +1302,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
           {receiptDocuments.map((document) => (
             <article className="receipt-row" key={document.id}>
               <div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name}</span></div>
-              {isIsaiDocument(document) ? <span>ISAI no requiere número de boleta.</span> : <label>Número de boleta<input value={receiptDrafts[document.id] ?? ""} onChange={(event) => setReceiptDrafts((current) => ({ ...current, [document.id]: event.target.value }))} placeholder="Ejemplo: B-12345" maxLength="100" /></label>}
-              <button onClick={() => registerReceiptSend(document)} disabled={busy}>{isIsaiDocument(document) ? "Marcar ENVIADO sin boleta" : "Marcar ENVIADO"}</button>
+              {isIsaiDocument(document) ? <span>ISAI no requiere número de boleta.</span> : <label>Número de boleta<input value={receiptDrafts[document.id] ?? ""} disabled={documentSaveBlocked} onChange={(event) => setReceiptDrafts((current) => ({ ...current, [document.id]: event.target.value }))} placeholder="Ejemplo: B-12345" maxLength="100" /></label>}
+              <button onClick={() => registerReceiptSend(document)} disabled={documentSaveBlocked}>{isIsaiDocument(document) ? "Marcar ENVIADO sin boleta" : "Marcar ENVIADO"}</button>
             </article>
           ))}
         </div>}
@@ -1340,17 +1312,18 @@ export default function HomePage({ initialView = "panel" } = {}) {
         <div className="scanner-heading"><div><p className="eyebrow">OPERACIÓN RÁPIDA</p><h2>Escanear varios documentos</h2></div><span>Selecciona una operación una sola vez y escanea todos los documentos</span></div>
         <div className="scan-modes" aria-label="Operación automática al escanear">
           {[["ENVIADO", "ENVIADO"], ["AUTORIZADO", "AUTORIZADO"], ["RECHAZADO", "RECHAZADO"]].map(([status, label]) => (
-            <button className={scanMode === status ? "active" : ""} key={status} onClick={() => activateScanMode(status)}>{label}</button>
+            <button className={scanMode === status ? "active" : ""} key={status} onClick={() => activateScanMode(status)} disabled={documentSaveBlocked}>{label}</button>
           ))}
         </div>
         <p className="scan-mode-help">{scanMode ? `Modo activo: ${formatStatus(scanMode)}. Cada lectura se guardará automáticamente.` : "Sin modo automático: escanea un documento y después elige la acción."}</p>
         <p className="scan-mode-help">Si eliges ENVIADO y el documento ya tuvo un envío anterior, RASTREADOC lo registrará automáticamente como REINGRESADO.</p>
-        {scanMode === "ENVIADO" && <div className="quick-rejection"><label>Número de boleta (excepto ISAI)<input value={receiptNumber} onChange={(event) => setReceiptNumber(event.target.value)} placeholder="Captura la boleta de este documento" maxLength="100" /></label><label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
-        {scanMode === "RECHAZADO" && <div className="quick-rejection"><label>Motivo para estos rechazos (opcional)<input value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label><label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
+        {scanMode === "ENVIADO" && <div className="quick-rejection"><label>Número de boleta (excepto ISAI)<input value={receiptNumber} disabled={documentSaveBlocked} onChange={(event) => setReceiptNumber(event.target.value)} placeholder="Captura la boleta de este documento" maxLength="100" /></label><label>Observaciones (opcional)<input value={movementNotes} disabled={documentSaveBlocked} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
+        {scanMode === "RECHAZADO" && <div className="quick-rejection"><label>Motivo para estos rechazos (opcional)<input value={rejectionReason} disabled={documentSaveBlocked} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label><label>Observaciones (opcional)<input value={movementNotes} disabled={documentSaveBlocked} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
         <form className="scan-form" onSubmit={scanDocument}>
-          <input ref={scanInputRef} value={scanToken} onChange={(event) => setScanToken(event.target.value)} placeholder="Escanea el QR aquí" aria-label="Código QR" />
-          <button type="submit" disabled={busy}>{scanMode ? "Registrar lectura" : "Buscar documento"}</button>
+          <input ref={scanInputRef} value={scanToken} onChange={(event) => setScanToken(event.target.value)} placeholder="Escanea el QR aquí" aria-label="Código QR" disabled={documentSaveBlocked} />
+          <button type="submit" disabled={documentSaveBlocked}>{busy || processingScan ? "Procesando…" : scanMode ? "Registrar lectura" : "Buscar documento"}</button>
         </form>
+        <p className="scan-mode-help">Espera la confirmación en pantalla antes de escanear el siguiente documento.</p>
         {scannedDocument && (
           <div className="scan-result">
             <div className="document-summary">
@@ -1362,17 +1335,17 @@ export default function HomePage({ initialView = "panel" } = {}) {
               {isOutsideOffice(scannedDocument.status) && <div><span>Tiempo fuera</span><strong>{formatTimeOutside(scannedDocument.last_movement_at, currentTime)}</strong></div>}
             </div>
             {!scanMode && <div className="movement-fields">
-              {!isIsaiDocument(scannedDocument) && <label>Número de boleta (solo para enviar)<input value={receiptNumber} onChange={(event) => setReceiptNumber(event.target.value)} maxLength="100" /></label>}
-              <label>Motivo del rechazo (opcional)<input value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label>
-              <label>Observaciones (opcional)<input value={movementNotes} onChange={(event) => setMovementNotes(event.target.value)} /></label>
+              {!isIsaiDocument(scannedDocument) && <label>Número de boleta (solo para enviar)<input value={receiptNumber} disabled={documentSaveBlocked} onChange={(event) => setReceiptNumber(event.target.value)} maxLength="100" /></label>}
+              <label>Motivo del rechazo (opcional)<input value={rejectionReason} disabled={documentSaveBlocked} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label>
+              <label>Observaciones (opcional)<input value={movementNotes} disabled={documentSaveBlocked} onChange={(event) => setMovementNotes(event.target.value)} /></label>
             </div>}
             {!scanMode && <div className="movement-actions">
-              <button onClick={() => registerMovement("ENVIADO")} disabled={busy}>Enviar</button>
-              <button onClick={() => registerMovement("EN_OFICINA")} disabled={busy}>Recibir en oficina</button>
-              <button onClick={() => registerMovement("AUTORIZADO")} disabled={busy}>Autorizar</button>
-              <button className="danger-button" onClick={() => registerMovement("RECHAZADO")} disabled={busy}>Rechazar</button>
+              <button onClick={() => registerMovement("ENVIADO")} disabled={documentSaveBlocked}>Enviar</button>
+              <button onClick={() => registerMovement("EN_OFICINA")} disabled={documentSaveBlocked}>Recibir en oficina</button>
+              <button onClick={() => registerMovement("AUTORIZADO")} disabled={documentSaveBlocked}>Autorizar</button>
+              <button className="danger-button" onClick={() => registerMovement("RECHAZADO")} disabled={documentSaveBlocked}>Rechazar</button>
             </div>}
-            {scanMode && manualMovementReady && <button className="quick-register" onClick={() => registerMovement(scanMode)} disabled={busy}>Registrar {formatStatus(scanMode)}</button>}
+            {scanMode && manualMovementReady && <button className="quick-register" onClick={() => registerMovement(scanMode)} disabled={documentSaveBlocked}>Registrar {formatStatus(scanMode)}</button>}
           </div>
         )}
       </section>}
@@ -1395,7 +1368,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
                 <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{["EN_OFICINA", "RECHAZADO", "ENVIADO", "REENVIADO"].includes(document.status) && <span className="time-outside">{statusTimeLabel(document.status)}: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
-                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && document.status === "RECHAZADO" && <button onClick={() => markRejectedDocumentReady(document)} disabled={busy}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
+                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && document.status === "RECHAZADO" && <button onClick={() => markRejectedDocumentReady(document)} disabled={documentSaveBlocked}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
               </article>
             ))}
           </div>
@@ -1562,10 +1535,12 @@ export default function HomePage({ initialView = "panel" } = {}) {
             <h2>Editar documento</h2>
             <p>{editPreview.case_files.number} · {formatDocumentName(editPreview)}</p>
             <div className="status-change-preview"><span>Actual</span><strong>{formatStatus(editPreview.status)}</strong><span>Nuevo</span><strong>{formatStatus(correctedStatus)}</strong></div>
-            <label>Identificador para distinguirlo (opcional)<input value={correctedDocumentLabel} onChange={(event) => setCorrectedDocumentLabel(event.target.value)} placeholder="Ejemplo: Original, Copia 1, Segundo certificado" maxLength="120" /></label>
-            <label>Estatus correcto<select value={correctedStatus} onChange={(event) => setCorrectedStatus(event.target.value)}>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
-            <label>Motivo de la corrección (opcional)<input value={correctionNote} onChange={(event) => setCorrectionNote(event.target.value)} placeholder="Ejemplo: Se seleccionó rechazado por error" /></label>
-            <div className="edit-actions"><button type="button" className="secondary" onClick={() => setEditPreview(null)}>Cancelar</button><button type="submit" disabled={busy}>Guardar cambios</button></div>
+            <label>Identificador para distinguirlo (opcional)<input value={correctedDocumentLabel} disabled={documentSaveBlocked} onChange={(event) => setCorrectedDocumentLabel(event.target.value)} placeholder="Ejemplo: Original, Copia 1, Segundo certificado" maxLength="120" /></label>
+            <label>Estatus correcto<select value={correctedStatus} disabled={documentSaveBlocked} onChange={(event) => setCorrectedStatus(event.target.value)}>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
+            <label>Motivo de la corrección (opcional)<input value={correctionNote} disabled={documentSaveBlocked} onChange={(event) => setCorrectionNote(event.target.value)} placeholder="Ejemplo: Se seleccionó rechazado por error" /></label>
+            {message && <div className={`notice ${message.type}`} role="status" aria-live="polite">{message.text}</div>}
+            {pendingSave && <button type="button" className="secondary" onClick={verifyPendingSave} disabled={busy}>Verificar guardado</button>}
+            <div className="edit-actions"><button type="button" className="secondary" disabled={busy} onClick={() => { if (!operationClient.isInFlight()) setEditPreview(null); }}>Cancelar</button><button type="submit" disabled={documentSaveBlocked}>Guardar cambios</button></div>
             <small>Si cambias el estatus, el movimiento anterior permanecerá en el historial.</small>
           </form>
         </div>
