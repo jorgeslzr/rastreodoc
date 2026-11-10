@@ -15,13 +15,16 @@
 - Se comprobó en sus archivos públicos que la app incorpora 8192 para el indicador
   de almacenamiento y la dirección del proyecto Supabase esperado. Ese indicador
   es una referencia del plan, no una medición del espacio libre físico del disco.
-- Las variables de Supabase aparecen compartidas entre Production y Preview.
-  Antes de probar escrituras en un Preview debe conectarse a una base separada.
+- Las entradas generales de Supabase siguen compartidas entre Production y
+  Preview. Se crearon tres overrides exclusivos para codex/rastreadoc-pruebas:
+  URL, clave publicable y clave de servidor del proyecto Free. El usuario confirmó
+  acceso y escrituras sobre los documentos ficticios. Otras ramas Preview siguen
+  necesitando revisar su aislamiento antes de probar escrituras.
 - Los dominios del entorno de Codex están habilitados y se verificó conectividad.
   No se han inspeccionado los valores privados ni conectado credenciales de
   administración al entorno.
 
-## Cambios preparados localmente, sin publicar
+## Cambios publicados solo en la rama y el Preview de pruebas
 
 - Mensaje de boleta consistente con el estado confirmado por servidor.
 - Error de consulta QR diferenciado de documento ausente.
@@ -66,23 +69,23 @@ Nunca toman una URL de Supabase ni reutilizan una base existente.
 Las pruebas de navegador crean un servidor Next local con dirección y clave
 ficticias, interceptan su API y bloquean destinos externos. Comprueban doble clic,
 respuesta perdida, verificación con sesión expirada, corrección con conflicto y
-bloqueo del escáner. Estas pruebas no sustituyen validar la integración real de
-Supabase en un proyecto de pruebas.
+bloqueo del escáner. La integración real también se comprobó manualmente con el usuario en
+Supabase Free y el Preview; los resultados están registrados abajo.
 
 En esta máquina el PostgreSQL aislado se obtuvo con índices Debian firmados y
 paquetes verificados por APT, extraídos sin instalar nada en el sistema:
 `/tmp/rastreodoc-pg-packages/root/usr/lib/postgresql/17/bin`.
 Esa ruta temporal puede no existir en una máquina futura.
 
-Resultados locales de esta entrega: 12 pruebas JavaScript, 31 de PostgreSQL y
+Resultados locales de esta entrega: 12 pruebas JavaScript, 33 de PostgreSQL y
 6 de navegador aprobadas. Compilación correcta y lint sin errores, con una
 advertencia existente sobre la imagen del QR.
 
 ## Proyecto Supabase de pruebas
 
 El usuario confirmó que creó una organización Free y mostró el nuevo proyecto
-Healthy, con dirección distinta de la oficina. Aún no se ha ejecutado allí la
-preparación ni validado la integración de la app.
+Healthy, con dirección distinta de la oficina. Confirmó la ejecución del SQL
+de preparación, la creación del usuario y su perfil, y la integración con Preview.
 
 Para generar la preparación desde el esquema actual:
 
@@ -102,13 +105,46 @@ del correo antes de crear pruebas/admin; conserva perfiles existentes diferentes
 No incluye contraseñas ni modifica usuarios de Authentication. El usuario confirmó que
 la ejecución terminó y se creó el perfil de pruebas.
 
+## Pruebas manuales confirmadas por el usuario en Preview
+
+Aplicación con los cambios de 8c3c246 y base Free independiente. El usuario
+confirmó los siguientes resultados; no se hicieron estas pruebas en producción:
+
+- Acceso con pruebas y consulta de PRUEBA-001, con dos documentos ficticios.
+- Envío del certificado con B-PRUEBA-001: 2 movimientos.
+- Rechazo: 3 movimientos. Repetir el mismo QR en RECHAZADO fue rechazado y mantuvo 3.
+- Listo para enviar y nuevo envío B-PRUEBA-002: REINGRESADO, 5 movimientos.
+- Corrección conjunta de etiqueta y estatus a AUTORIZADO: 6 movimientos y nota de corrección.
+- Dos formularios abiertos sobre la misma versión: A guardó RECHAZADO; B recibió
+  conflicto y no sobrescribió A. El historial mantuvo 7 movimientos.
+- ISAI sin boleta: ENVIADO con 2 movimientos, sin exigir boleta.
+
+Para evitar abrir un despliegue anterior se usa el alias de la rama:
+https://rastreodoc-git-codex-rastreadoc-pruebas-jasg.vercel.app/
+La incidencia de acceso se resolvió para el usuario al entrar por este alias;
+no se pudo inspeccionar la configuración del enlace inmutable que fallaba.
+
+## Revisión de estructura de producción pendiente
+
+Ejecutar únicamente scripts/revision-produccion.sql en SQL Editor del proyecto
+real vmmafjnhtluinmmjyigv. Es una sola consulta de metadatos, sin DDL ni DML y sin
+leer expedientes. Fue probada dentro de una transacción READ ONLY en PostgreSQL.
+
+La salida comprueba columnas/tipos, estatus del enum y triggers de creación,
+sincronización e inmutabilidad del historial. Si hay faltantes o la actualización
+ya figura presente, revisar el resultado antes de continuar. Este chequeo no
+sustituye verificar el respaldo reciente ni autoriza instalar la migración.
+Los cambios de esta revisión son documentación, consulta y pruebas; no alteran
+el código de la app que el usuario acaba de validar.
+
 ## Instalación coordinada pendiente
 
-1. Revisar los cambios y validarlos con Supabase en un proyecto separado. No usar
-   la base de otro sistema de oficina como base de pruebas. No ejecutar todas
-   las migraciones históricas: existe una que elimina expedientes.
-2. Preparar la versión exacta de la app antes de iniciar la actualización. Estas
-   modificaciones siguen en archivos locales; no se han enviado a GitHub.
+1. Revisar la salida de scripts/revision-produccion.sql y confirmar que existe
+   un respaldo reciente. Las pruebas funcionales en la base Free ya se confirmaron.
+   No ejecutar todas las migraciones históricas: existe una que elimina expedientes.
+2. Revisar el diff de codex/rastreadoc-pruebas contra main y preparar la versión
+   exacta. La rama ya está en GitHub; main se confirmó sin cambios en 4924d85.
+   Aún falta autorización para actualizar producción.
 3. Con la oficina cerrada y sin escrituras pendientes, aplicar únicamente
    `supabase/migrations/20261110_atomic_document_operations.sql`.
 4. Publicar inmediatamente la versión de la app que usa esa RPC. Entre ambos
@@ -134,6 +170,10 @@ no recurre a guardados separados si la función no está disponible.
 - Verificar si el segundo sistema usa Supabase Storage. Los archivos de Storage
   necesitan respaldo aparte de la base de datos.
 - Preparar una copia externa y su proceso de comprobación.
+- La autenticación conserva mensajes genéricos y carece de límites de espera
+  explícitos para getSession/signIn; la revisión de código detectó ese pendiente,
+  pero no se estableció como causa de la incidencia de acceso y no se cambió en
+  esta entrega de guardados.
 
 ## Proyectos
 
@@ -141,5 +181,5 @@ no recurre a guardados separados si la función no está disponible.
 - Vercel: https://vercel.com/jasg/rastreodoc
 - Supabase: https://supabase.com/dashboard/project/vmmafjnhtluinmmjyigv
 
-La rama local preparada para esta entrega es codex/rastreadoc-pruebas.
-No se han enviado estos cambios a GitHub ni aplicado la migración en producción.
+La rama de esta entrega es codex/rastreadoc-pruebas y está subida a GitHub.
+No se ha fusionado con main ni aplicado la migración en producción.

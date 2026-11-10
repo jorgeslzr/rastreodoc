@@ -161,6 +161,45 @@ class DatabaseOperations(unittest.TestCase):
         """, database=database)
         return database
 
+    def production_review(self, database):
+        sql = (REPOSITORY / "scripts/revision-produccion.sql").read_text().strip().removesuffix(";")
+        # Enforce read-only at the database level while testing the review itself.
+        query = "begin read only; select row_to_json(review) from (" + sql + "\n) review; commit;"
+        return json.loads(self.run_sql(query, database=database))
+
+    def test_production_review_checks_old_schema_without_writing(self):
+        database = self.new_empty_setup_database()
+        schema = (REPOSITORY / "supabase/schema.sql").read_text()
+        marker = "-- Guardados de documentos atómicos, con detección de conflictos e idempotencia."
+        self.run_sql(schema.split(marker)[0], database=database)
+        report = self.production_review(database)
+        for key in ["estructura_compatible", "estatus_compatibles", "historial_configurado", "autenticacion_disponible"]:
+            self.assertTrue(report[key], report)
+        self.assertFalse(report["actualizacion_ya_presente"])
+        self.assertEqual(report["detalle"], {"columnas": [], "estatus": [], "automatismos": []})
+        self.run_sql("alter table public.documents drop column label;", database=database)
+        self.run_sql("alter table public.movements disable trigger movement_sync_document;", database=database)
+        self.run_sql("alter type public.document_status rename value 'REENVIADO' to 'REINGRESADO';", database=database)
+        report = self.production_review(database)
+        self.assertFalse(report["estructura_compatible"])
+        self.assertIn("public.documents.label", report["detalle"]["columnas"])
+        self.assertFalse(report["historial_configurado"])
+        self.assertIn("movement_sync_document", report["detalle"]["automatismos"])
+        self.assertFalse(report["estatus_compatibles"])
+        self.assertIn("REENVIADO", report["detalle"]["estatus"])
+
+    def test_production_review_identifies_already_updated_schema(self):
+        database = self.new_empty_setup_database()
+        self.run_sql(self.generated_test_setup(), database=database)
+        report = self.production_review(database)
+        self.assertTrue(report["estructura_compatible"], report)
+        self.assertTrue(report["estatus_compatibles"], report)
+        self.assertTrue(report["historial_configurado"], report)
+        self.assertTrue(report["autenticacion_disponible"], report)
+        self.assertTrue(report["actualizacion_ya_presente"], report)
+        self.assertEqual(self.run_sql("select count(*) from public.documents;", database=database), "2")
+        self.assertEqual(self.run_sql("select count(*) from public.movements;", database=database), "2")
+
     def generated_test_setup(self):
         result = subprocess.run(
             ["node", str(REPOSITORY / "scripts/generate-test-project-setup.mjs")],
