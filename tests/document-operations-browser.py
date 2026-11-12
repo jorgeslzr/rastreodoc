@@ -58,6 +58,8 @@ class SupabaseFixture:
         self.held_load = None
         self.reads = []
         self.creations = []
+        self.case_creations = []
+        self.held_case = None
         self.created_documents = {}
         self.creation_movements = 0
         self.catalog_writes = []
@@ -158,6 +160,14 @@ class SupabaseFixture:
             return
         if parsed.path.startswith("/rest/v1/"):
             table = parsed.path.split("/")[-1]
+            if table == "case_files" and request.method == "POST" and self.scenario.startswith("case_"):
+                data = copy.deepcopy(request.post_data_json)
+                self.case_creations.append(data)
+                if self.scenario in {"case_delayed", "case_timeout"} and len(self.case_creations) == 1:
+                    self.held_case = (route, data)
+                else:
+                    self.respond_case_creation(route, data)
+                return
             if table in {"document_types", "agencies"} and request.method == "POST" and self.scenario.startswith("creation"):
                 data = copy.deepcopy(request.post_data_json)
                 self.catalog_writes.append({"table": table, "data": data})
@@ -165,7 +175,7 @@ class SupabaseFixture:
                 self.rows[table].append(row)
                 self.fulfill(route, row, 201)
                 return
-            if table == "documents" and request.method == "POST" and self.scenario.startswith("creation"):
+            if table == "documents" and request.method == "POST" and (self.scenario.startswith("creation") or self.scenario.startswith("case_")):
                 data = copy.deepcopy(request.post_data_json)
                 self.creations.append(data)
                 if self.scenario == "creation_before_commit" and len(self.creations) == 1:
@@ -175,6 +185,7 @@ class SupabaseFixture:
                     self.fulfill(route, {"code": "23505", "message": "Fictional primary key conflict"}, 409)
                     return
                 created = {**copy.deepcopy(self.document), **data, "qr_token": "99999999-9999-4999-8999-999999999999"}
+                created["case_files"] = {"number": next(item["number"] for item in self.rows["case_files"] if item["id"] == data["case_file_id"])}
                 created["document_types"] = {"name": next(item["name"] for item in self.rows["document_types"] if item["id"] == data["document_type_id"])}
                 created["agencies"] = {"name": next(item["name"] for item in self.rows["agencies"] if item["id"] == data["agency_id"])}
                 self.created_documents[data["id"]] = created
@@ -236,6 +247,15 @@ class SupabaseFixture:
                     rows = [row for row in rows if row.get("document_id", row.get("documents", {}).get("id")) == identifier]
             else:
                 rows = copy.deepcopy(self.rows.get(table, []))
+                if table == "case_files":
+                    if "id" in query:
+                        if self.scenario == "case_verify_expired":
+                            self.fulfill(route, {"code": "PGRST301", "message": "Fictional expired verification"}, 401)
+                            return
+                        rows = [row for row in rows if row["id"] == query["id"][0].removeprefix("eq.")]
+                    if "number" in query:
+                        number = query["number"][0].removeprefix("eq.").casefold()
+                        rows = [row for row in rows if row["number"].casefold() == number]
                 if "name" in query:
                     name = query["name"][0].removeprefix("eq.").casefold()
                     rows = [row for row in rows if row["name"].casefold() == name]
@@ -269,6 +289,27 @@ class SupabaseFixture:
         route, original = self.held_load
         self.held_load = None
         self.fulfill(route, original if rows is None else rows)
+
+    def respond_case_creation(self, route, data):
+        if self.scenario == "case_before_commit" and len(self.case_creations) == 1:
+            route.abort("connectionfailed")
+            return
+        if self.scenario == "case_rollback" and len(self.case_creations) == 1:
+            self.fulfill(route, {"code": "23514", "message": "Fictional constraint failure"}, 400)
+            return
+        if any(row["id"] == data["id"] or row["number"].casefold() == data["number"].casefold() for row in self.rows["case_files"]):
+            self.fulfill(route, {"code": "23505", "message": "Fictional existing case"}, 409)
+            return
+        self.rows["case_files"].append(copy.deepcopy(data))
+        if self.scenario in {"case_lost_reply", "case_verify_expired"} and len(self.case_creations) == 1:
+            route.abort("connectionfailed")
+            return
+        self.fulfill(route, data, 201)
+
+    def release_case(self):
+        route, data = self.held_case
+        self.held_case = None
+        self.respond_case_creation(route, data)
 
     def respond_operation(self, route, args):
         if self.scenario == "conflict" and len(self.operations) == 1:
@@ -675,6 +716,143 @@ window.print=()=>window.__printCalls.push({
         for page in pdf.pages:
             self.assertAlmostEqual(float(page.mediabox.width) * 25.4 / 72, 40, delta=0.5)
             self.assertAlmostEqual(float(page.mediabox.height) * 25.4 / 72, 30, delta=0.5)
+
+    def case_form(self, page, number="EX-NUEVO"):
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Alta", exact=True).click()
+        page.get_by_label("Número de expediente", exact=True).fill(number)
+        return page.get_by_role("button", name="Guardar expediente", exact=True)
+
+    def assert_case_selected(self, page, number="EX-NUEVO"):
+        expect(page.get_by_label("Buscar expediente", exact=True)).to_have_value(number)
+        expect(page.get_by_label("Número de expediente", exact=True)).to_have_value("")
+        expect(page.locator(f'datalist option[value="{number}"]')).to_have_count(1)
+        expect(page.get_by_role("button", name="Verificar expediente", exact=True)).not_to_be_visible()
+
+    def test_case_normal_double_click_uses_one_insert_and_immediately_accepts_documents(self):
+        page, fixture = self.open_app("case_normal")
+        initial_reads = len(fixture.reads)
+        self.case_form(page, "  EX-NUEVO  ").evaluate("button=>{button.click();button.click();}")
+        expect(page.get_by_role("status")).to_have_text("Expediente EX-NUEVO guardado correctamente.")
+        self.assert_case_selected(page)
+        self.assertEqual(len(fixture.case_creations), 1)
+        self.assertEqual(len(fixture.reads), initial_reads, "Normal case creation must not reload workspace data")
+        page.get_by_label("Tipo de documento").select_option("CERTIFICADO")
+        page.get_by_label("Abogado").select_option(LAWYER_ID)
+        page.get_by_label("Auxiliar").select_option(AUXILIARY_ID)
+        page.get_by_label("Identificador para distinguirlo (opcional)").fill("Documento nuevo expediente")
+        page.get_by_role("button", name="Agregar documento", exact=True).click()
+        expect(page.get_by_role("region", name="Último documento guardado")).to_contain_text("EX-NUEVO · CERTIFICADO — Documento nuevo expediente")
+        self.assertEqual(fixture.creations[0]["case_file_id"], fixture.case_creations[0]["id"])
+        self.assertEqual(fixture.creation_movements, 1)
+
+    def test_case_lost_reply_stays_verifiable_after_navigation_and_blocks_reload(self):
+        page, fixture = self.open_app("case_lost_reply")
+        self.case_form(page).click()
+        verify = page.get_by_role("button", name="Verificar expediente", exact=True)
+        expect(verify).to_be_enabled()
+        expect(page.get_by_role("status")).to_contain_text("Podría haberse guardado")
+        expect(page.get_by_label("Número de expediente", exact=True)).to_be_disabled()
+        expect(page.get_by_label("Buscar expediente", exact=True)).to_be_disabled()
+        page.evaluate("()=>window.location.reload()")
+        deadline = time.monotonic() + 5
+        while "beforeunload" not in fixture.dialog_types and time.monotonic() < deadline:
+            page.wait_for_timeout(20)
+        self.assertIn("beforeunload", fixture.dialog_types)
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Reportes", exact=True).click()
+        expect(verify).to_be_visible()
+        verify.evaluate("button=>{button.click();button.click();}")
+        expect(verify).not_to_be_visible()
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Alta", exact=True).click()
+        self.assert_case_selected(page)
+        self.assertEqual(len(fixture.case_creations), 1)
+        self.assertEqual(len([read for read in fixture.reads if read["table"] == "case_files" and "id" in read["query"]]), 1)
+
+    def test_case_precommit_failure_retries_the_original_id_and_number(self):
+        page, fixture = self.open_app("case_before_commit")
+        self.case_form(page).click()
+        verify = page.get_by_role("button", name="Verificar expediente", exact=True)
+        expect(verify).to_be_enabled()
+        self.assertEqual(len(fixture.rows["case_files"]), 1)
+        verify.click()
+        self.assert_case_selected(page)
+        self.assertEqual(fixture.case_creations[0], fixture.case_creations[1])
+        self.assertEqual(len(fixture.rows["case_files"]), 2)
+
+    def test_case_existing_number_selects_the_canonical_record_without_overwriting(self):
+        for outside_cache in [False, True]:
+            with self.subTest(outside_cache=outside_cache):
+                page, fixture = self.open_app("case_normal")
+                if outside_cache:
+                    fixture.rows["case_files"].append({"id": "aaaaaaaa-aaaa-4aaa-8aaa-000000000009", "number": "EX-EXTERNO"})
+                original = copy.deepcopy(fixture.rows["case_files"])
+                number = "EX-EXTERNO" if outside_cache else "TEST-001"
+                self.case_form(page, number.lower()).click()
+                expect(page.get_by_role("status")).to_have_text(f"El expediente {number} ya existe. Se seleccionó para agregar documentos.")
+                self.assert_case_selected(page, number)
+                self.assertEqual(fixture.rows["case_files"], original)
+                self.assertEqual(len(fixture.case_creations), 1)
+
+    def test_case_known_rollback_unlocks_the_form_for_a_corrected_capture(self):
+        page, fixture = self.open_app("case_rollback")
+        self.case_form(page).click()
+        expect(page.get_by_role("status")).to_contain_text("No se guardó el expediente.")
+        expect(page.get_by_label("Número de expediente", exact=True)).to_be_enabled()
+        expect(page.get_by_label("Número de expediente", exact=True)).to_have_value("EX-NUEVO")
+        page.get_by_label("Número de expediente", exact=True).fill("EX-CORREGIDO")
+        page.get_by_role("button", name="Guardar expediente", exact=True).click()
+        self.assert_case_selected(page, "EX-CORREGIDO")
+        self.assertNotEqual(fixture.case_creations[0]["id"], fixture.case_creations[1]["id"])
+        self.assertEqual(len(fixture.rows["case_files"]), 2)
+
+    def test_case_failed_verification_keeps_the_original_pending_capture(self):
+        page, fixture = self.open_app("case_verify_expired")
+        self.case_form(page).click()
+        verify = page.get_by_role("button", name="Verificar expediente", exact=True)
+        expect(verify).to_be_enabled()
+        verify.click()
+        expect(verify).to_be_enabled()
+        expect(page.get_by_label("Número de expediente", exact=True)).to_have_value("EX-NUEVO")
+        expect(page.get_by_label("Número de expediente", exact=True)).to_be_disabled()
+        fixture.scenario = "case_normal"
+        verify.click()
+        self.assert_case_selected(page)
+        self.assertEqual(len(fixture.case_creations), 1)
+
+    def test_case_inflight_request_locks_capture_and_scanner(self):
+        page, fixture = self.open_app("case_delayed")
+        self.case_form(page).evaluate("button=>{button.click();button.click();}")
+        expect(page.get_by_label("Número de expediente", exact=True)).to_be_disabled()
+        expect(page.get_by_label("Buscar expediente", exact=True)).to_be_disabled()
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Escanear", exact=True).click()
+        expect(page.get_by_label("Código QR", exact=True)).to_be_disabled()
+        for button in page.locator(".scan-modes button").all():
+            expect(button).to_be_disabled()
+        expect(page.get_by_role("button", name="Procesando expediente…", exact=True)).to_be_disabled()
+        self.assertIsNotNone(fixture.held_case)
+        fixture.release_case()
+        expect(page.get_by_role("status")).to_contain_text("guardado correctamente.")
+        expect(page.get_by_label("Código QR", exact=True)).to_be_enabled()
+        self.assertEqual(len(fixture.case_creations), 1)
+
+    def test_case_timeout_keeps_verification_and_ignores_a_late_old_insert(self):
+        page, fixture = self.open_app("case_timeout")
+        page.clock.install()
+        self.case_form(page).click()
+        expect(page.get_by_label("Número de expediente", exact=True)).to_be_disabled()
+        deadline = time.monotonic() + 5
+        while fixture.held_case is None and time.monotonic() < deadline:
+            page.wait_for_timeout(20)
+        self.assertIsNotNone(fixture.held_case)
+        page.clock.fast_forward(21000)
+        verify = page.get_by_role("button", name="Verificar expediente", exact=True)
+        expect(verify).to_be_enabled()
+        expect(page.get_by_label("Número de expediente", exact=True)).to_be_disabled()
+        verify.click()
+        self.assert_case_selected(page)
+        fixture.release_case()
+        expect(page.get_by_role("status")).to_have_text("Expediente EX-NUEVO guardado correctamente.")
+        self.assertEqual(fixture.case_creations[0], fixture.case_creations[1])
+        self.assertEqual(len(fixture.rows["case_files"]), 2)
 
     def test_creation_has_one_insert_without_catalog_or_report_reload_and_prints_saved_qr(self):
         page, fixture = self.open_app("creation_normal")

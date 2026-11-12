@@ -29,6 +29,10 @@
   reportes, se publicó en 65c11108ad012696575c431a3c7c60976e65e05e. Sus once
   señales públicas y el backend real se verificaron; el usuario confirmó el
   horario y los documentos de un expediente conocido en Reportes de producción.
+- La mejora de carga completa se publicó en
+  31542aa3be742729b177ce37649cc9b957471ce1. Se verificaron sus quince señales
+  públicas y el backend real; el usuario confirmó después el panel y la consulta
+  de un expediente conocido con sus documentos en producción.
 - Se comprobó en sus archivos públicos que la app incorpora 8192 para el indicador
   de almacenamiento y la dirección del proyecto Supabase esperado. Ese indicador
   es una referencia del plan, no una medición del espacio libre físico del disco.
@@ -214,9 +218,43 @@ PRUEBA-001 en Buscar. En Alta confirmó el expediente y la dependencia REGISTRO
 PÚBLICO al elegir CERTIFICADO. En Reportes confirmó los mismos documentos de
 Buscar, con sus fechas y horas de último movimiento.
 
-La publicación en producción de esta quinta entrega está pendiente de la
-instrucción del usuario. Los errores de red y esperas se verificaron en las
-pruebas automatizadas; no se interrumpió la conexión de la oficina para probarlos.
+Después de validar Preview, el usuario autorizó publicar esta quinta entrega.
+Se envió el SHA fijo 31542aa a main mediante push normal. El sitio sirvió sus
+quince señales públicas, ocho scripts correctos y el backend real. El usuario
+confirmó después el panel y la consulta de un expediente conocido con sus
+documentos. Los errores de red y esperas se verificaron en pruebas automatizadas;
+no se interrumpió la conexión de la oficina para probarlos.
+
+## Sexta entrega: alta de expedientes verificable
+
+La base ya impide números repetidos, pero una respuesta perdida al crear un
+expediente dejaba la captura sin resolver. Un nuevo intento podía responder
+«ya existe» sin incorporarlo a la búsqueda hasta recargar. Esta entrega conserva
+el número capturado y un UUID propio hasta confirmar el resultado:
+
+- Un alta normal hace una sola inserción. El expediente se incorpora una vez
+  al catálogo local y se selecciona para agregar documentos sin recargar.
+- Una solicitud en curso bloquea dobles envíos y la captura de documentos o
+  lectura de QR. Si el guardado es incierto, ofrece Verificar expediente y
+  conserva los campos hasta resolverlo. La verificación sigue accesible al
+  cambiar de vista; el navegador avisa antes de abandonar una solicitud pendiente.
+- Verificar primero busca el UUID original. Si no aparece, reintenta el mismo
+  UUID y número; las restricciones de base impiden un expediente adicional.
+- Un conflicto por número busca el registro mediante igualdad citext de la
+  base, conserva su escritura original y lo selecciona con el mensaje «ya existe».
+  No sobrescribe expedientes ni afirma haber creado uno que ya estaba guardado.
+- Cada alta/verificación tiene un límite total de 20 segundos. Una respuesta
+  antigua no borra la verificación pendiente ni modifica un intento posterior.
+  Un fallo de lectura o autenticación conserva la solicitud incierta. La denegación
+  de un reintento no demuestra que el primer intento haya sido revertido.
+- Solo una reversión conocida de la primera inserción permite corregir la
+  captura con un UUID nuevo. Un resultado incompleto sigue pendiente.
+- La solicitud se conserva en memoria de la pestaña; no se promete persistencia
+  después de ignorar el aviso de cierre/recarga. No hay migraciones ni cambios
+  de variables, claves, roles, infraestructura o dependencias.
+
+La validación manual del usuario en Preview y la publicación de esta sexta
+entrega están pendientes.
 
 ## Validación reproducible
 
@@ -269,6 +307,18 @@ transitorio. Se mantienen los reintentos reales del SDK (1, 2 y 4 segundos);
 las esperas de esas pruebas contemplan ese tiempo. Lint no tiene errores y
 conserva la advertencia previa. PostgreSQL no se repitió, ya que no cambia SQL.
 La compilación Next 16.4.6 es correcta con variables públicas ficticias.
+
+Para alta de expedientes se aprobaron 67 pruebas JavaScript, 36 de PostgreSQL y
+41 de navegador. Las dos pruebas SQL nuevas confirman inserción con UUID propio,
+reintento sin segunda fila y unicidad citext ante diferencias de mayúsculas. Las
+pruebas de navegador incluyen doble clic, incorporación inmediata al formulario
+de documentos, respuesta perdida, verificación tras cambiar de vista, aviso de
+recarga, reintento con la misma solicitud, número existente dentro/fuera del
+catálogo local, reversión confirmada, autenticación fallida y respuesta tardía.
+Se mantuvieron aprobados todos los flujos anteriores. Lint sin errores, con la
+advertencia previa de la imagen QR. Las pruebas usan datos ficticios en PostgreSQL
+local y en la API interceptada del navegador, sin escribir en Supabase. La
+compilación Next 16.4.6 es correcta con variables públicas ficticias.
 
 ## Proyecto Supabase de pruebas
 
@@ -346,7 +396,12 @@ no recurre a guardados separados si la función no está disponible.
   copias más frecuentes o PITR, con su costo adicional.
 - Verificar si el segundo sistema usa Supabase Storage. Los archivos de Storage
   necesitan respaldo aparte de la base de datos.
-- Preparar una copia externa y su proceso de comprobación.
+- La copia externa queda pospuesta por instrucción del usuario. La oficina
+  tiene un servidor accesible por QuickConnect que se respalda en otro cada
+  noche, alrededor de las 11 p. m. según su estimación. No se verificaron modelo,
+  sistema operativo ni horario exacto, y no se configuró una exportación.
+  Los respaldos diarios Pro de Supabase continúan; no reabrir esta etapa hasta
+  que el usuario la retome.
 
 ## Proyectos
 
@@ -354,6 +409,6 @@ no recurre a guardados separados si la función no está disponible.
 - Vercel: https://vercel.com/jasg/rastreodoc
 - Supabase: https://supabase.com/dashboard/project/vmmafjnhtluinmmjyigv
 
-Las cuatro primeras entregas están publicadas en main hasta 65c1110. La quinta se
-desarrolla en codex/carga-confiable y se valida usando codex/rastreadoc-pruebas,
+Las cinco primeras entregas están publicadas en main hasta 31542aa. La sexta se
+desarrolla en codex/alta-expedientes-confiable y se valida usando codex/rastreadoc-pruebas,
 que conserva los overrides del proyecto Free. No necesita ejecutar migraciones.

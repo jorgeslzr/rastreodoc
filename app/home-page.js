@@ -6,6 +6,7 @@ import SectionErrorBoundary from "./section-error-boundary";
 import { refreshAfterSave, scanLookupMessage } from "@/lib/operation-feedback.mjs";
 import { createDocumentOperationClient, documentOperationArguments } from "@/lib/document-operations.mjs";
 import { createDocumentCreationClient } from "@/lib/document-creation.mjs";
+import { createCaseFileCreationClient } from "@/lib/case-file-creation.mjs";
 import { findCatalogRecord, indexReportMovements } from "@/lib/office-lookups.mjs";
 import { buildQrPrintHtml, createQrImageCache, preloadQrLibrary } from "@/lib/qr-labels.mjs";
 import { authErrorMessage, createSessionRecovery, withAuthDeadline } from "@/lib/auth-recovery.mjs";
@@ -337,6 +338,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const [busy, setBusy] = useState(false);
   const [pendingSave, setPendingSave] = useState(null);
   const [pendingCreation, setPendingCreation] = useState(false);
+  const [pendingCaseCreation, setPendingCaseCreation] = useState(false);
+  const caseCreationInFlight = useRef(false);
   const creationInFlight = useRef(false);
   const [processingScan, setProcessingScan] = useState(false);
   const [operationClient] = useState(() => createDocumentOperationClient(
@@ -348,9 +351,14 @@ export default function HomePage({ initialView = "panel" } = {}) {
     find: (id) => supabase.from("documents").select(DOCUMENT_SELECT).eq("id", id)
       .maybeSingle().abortSignal(AbortSignal.timeout(20000)),
   }));
+  const [caseCreationClient] = useState(() => createCaseFileCreationClient({
+    insert: (input, signal) => supabase.from("case_files").insert(input).select("id, number").single().abortSignal(signal),
+    findById: (id, signal) => supabase.from("case_files").select("id, number").eq("id", id).maybeSingle().abortSignal(signal),
+    findByNumber: (value, signal) => supabase.from("case_files").select("id, number").eq("number", value).maybeSingle().abortSignal(signal),
+  }));
   const scanInFlight = useRef(false);
   const reportRefreshVersion = useRef(0);
-  const documentSaveBlocked = busy || processingScan || Boolean(pendingSave) || pendingCreation;
+  const documentSaveBlocked = busy || processingScan || Boolean(pendingSave) || pendingCreation || pendingCaseCreation;
   const reportRangeError = reportDateRangeError(reportStart, reportEnd);
 
   useEffect(() => {
@@ -358,14 +366,14 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }, [activeView, documentSaveBlocked]);
 
   useEffect(() => {
-    if (!pendingCreation && !pendingSave) return;
+    if (!pendingCreation && !pendingSave && !pendingCaseCreation) return;
     const preserveVerification = (event) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", preserveVerification);
     return () => window.removeEventListener("beforeunload", preserveVerification);
-  }, [pendingCreation, pendingSave]);
+  }, [pendingCreation, pendingSave, pendingCaseCreation]);
 
   function openView(view) {
     setActiveView(view);
@@ -605,37 +613,51 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function createCaseFile(event) {
     event.preventDefault();
+    if (documentSaveBlocked || caseCreationInFlight.current || caseCreationClient.hasPending()
+      || creationInFlight.current || creationClient.hasPending() || operationClient.isInFlight() || operationClient.hasPending()) return;
     const cleanNumber = number.trim();
-
     if (!cleanNumber) return;
-
+    caseCreationInFlight.current = true;
+    setPendingCaseCreation(true);
     setBusy(true);
     reportRefreshVersion.current += 1;
     setMessage(null);
-    const { data, error } = await supabase
-      .from("case_files")
-      .insert({ number: cleanNumber })
-      .select("id, number")
-      .single();
-    setBusy(false);
+    try {
+      finishCaseCreation(await caseCreationClient.save(cleanNumber));
+    } catch {
+      finishCaseCreation({ kind: caseCreationClient.hasPending() ? "uncertain" : "failed" });
+    } finally {
+      caseCreationInFlight.current = false;
+      setBusy(false);
+    }
+  }
 
-    if (error?.code === "23505") {
-      setMessage({
-        type: "error",
-        text: "Este número de expediente ya existe. No se guardó un duplicado.",
-      });
+  function finishCaseCreation(result) {
+    setPendingCaseCreation(caseCreationClient.hasPending());
+    if (result.kind === "uncertain") {
+      setMessage({ type: "error", text: "No se pudo confirmar el expediente. Podría haberse guardado. Pulsa Verificar expediente antes de volver a capturarlo o recargar." });
       return;
     }
-
-    if (error) {
-      setMessage({ type: "error", text: "No fue posible guardar el expediente." });
+    if (result.kind === "failed") {
+      setMessage({ type: "error", text: "No se guardó el expediente. Revisa el número y vuelve a intentar; si continúa, comunícalo al administrador de la oficina." });
       return;
     }
-
+    if (!["saved", "existing"].includes(result.kind)) return;
+    const data = result.data;
     setNumber("");
-    setCaseFiles((current) => [data, ...current]);
+    setCaseFiles((current) => [data, ...current.filter((item) => item.id !== data.id)]);
     setCaseSearch(data.number);
-    setMessage({ type: "success", text: `Expediente ${cleanNumber} guardado correctamente.` });
+    setMessage({ type: "success", text: result.kind === "existing"
+      ? `El expediente ${data.number} ya existe. Se seleccionó para agregar documentos.`
+      : `Expediente ${data.number} guardado correctamente.` });
+  }
+
+  async function verifyCaseCreation() {
+    if (caseCreationInFlight.current || !caseCreationClient.hasPending()) return;
+    caseCreationInFlight.current = true;
+    setBusy(true);
+    try { finishCaseCreation(await caseCreationClient.verify()); }
+    finally { caseCreationInFlight.current = false; setBusy(false); }
   }
 
   async function findOrCreate(table, name) {
@@ -720,7 +742,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function createDocument(event) {
     event.preventDefault();
-    if (creationInFlight.current || creationClient.hasPending()
+    if (creationInFlight.current || creationClient.hasPending() || caseCreationInFlight.current || caseCreationClient.hasPending()
       || operationClient.isInFlight() || operationClient.hasPending()) return;
     const selectedCase = caseFiles.find((caseFile) => caseFile.number.toLocaleLowerCase("es-MX") === caseSearch.trim().toLocaleLowerCase("es-MX"));
     if (!selectedCase) {
@@ -1491,6 +1513,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
       {message && <div role="status" aria-live="polite" className={`notice page-notice ${message.type}`}>{message.text}</div>}
       {pendingSave && <div className="page-notice"><button className="secondary" onClick={verifyPendingSave} disabled={busy}>{busy ? "Verificando…" : "Verificar guardado"}</button></div>}
       {pendingCreation && <div className="page-notice"><button className="secondary" onClick={verifyDocumentCreation} disabled={busy}>{busy ? "Verificando…" : "Verificar alta"}</button></div>}
+      {pendingCaseCreation && <div className="page-notice"><button className="secondary" onClick={verifyCaseCreation} disabled={busy}>{busy ? "Procesando expediente…" : "Verificar expediente"}</button></div>}
       {qrTask && <p className="page-notice" aria-live="polite">Preparando QR: {qrTask.done} de {qrTask.total}.</p>}
 
       {activeView === "boletas" && <section className="receipt-section standalone">

@@ -571,6 +571,24 @@ class DatabaseOperations(unittest.TestCase):
         self.save(original, actor="", p_requested_status="AUTORIZADO", error="PT401")
         self.run_sql("select * from public.document_operation_receipts;", actor=ACTOR, error="42501")
 
+    def test_case_creation_with_client_id_can_be_verified_after_a_retry(self):
+        identifier = str(uuid.uuid4())
+        number = f"EX-{uuid.uuid4().hex}"
+        insert = f"insert into public.case_files(id,number) values ({literal(identifier)},{literal(number)});"
+        self.run_sql(insert, actor=ACTOR)
+        self.run_sql(insert, actor=ACTOR, error="23505")
+        stored = json.loads(self.run_sql(f"select json_build_object('id',id,'number',number) from public.case_files where id={literal(identifier)};", actor=ACTOR))
+        self.assertEqual(stored, {"id": identifier, "number": number})
+        self.assertEqual(self.run_sql(f"select count(*) from public.case_files where number={literal(number)};"), "1")
+
+    def test_case_number_remains_unique_across_different_ids_and_letter_case(self):
+        identifier = str(uuid.uuid4())
+        number = f"EX-{uuid.uuid4().hex}".upper()
+        self.run_sql(f"insert into public.case_files(id,number) values ({literal(identifier)},{literal(number)});", actor=ACTOR)
+        self.run_sql(f"insert into public.case_files(id,number) values ({literal(str(uuid.uuid4()))},{literal(number.lower())});", actor=ACTOR, error="23505")
+        stored = json.loads(self.run_sql(f"select json_build_object('id',id,'number',number) from public.case_files where number={literal(number.lower())};", actor=ACTOR))
+        self.assertEqual(stored, {"id": identifier, "number": number})
+
     def test_authenticated_document_creation_still_creates_initial_movement(self):
         original = self.new_document()
         self.assertEqual(original["status"], "EN_OFICINA")
