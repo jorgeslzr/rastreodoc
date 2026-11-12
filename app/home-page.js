@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import SectionErrorBoundary from "./section-error-boundary";
+import { BrandHeader } from "./components/brand";
+import Icon, { ActionButton } from "./components/ui";
+import WorkspaceShell from "./components/workspace-shell";
 import { refreshAfterSave, scanLookupMessage } from "@/lib/operation-feedback.mjs";
 import { createDocumentOperationClient, documentOperationArguments } from "@/lib/document-operations.mjs";
 import { createDocumentCreationClient } from "@/lib/document-creation.mjs";
@@ -1299,17 +1302,26 @@ export default function HomePage({ initialView = "panel" } = {}) {
     receipt_number: reportIndexes.latest.get(document.id)?.receipt_number ?? null,
     documents: document,
   })) : [], [documents, reportIndexes, documentDates]);
+  const summaryCounts = useMemo(() => {
+    const counts = { documents: documents.length, authorized: 0, sent: 0 };
+    for (const document of documents) {
+      if (document.status === "AUTORIZADO") counts.authorized++;
+      if (document.status === "ENVIADO") counts.sent++;
+    }
+    return counts;
+  }, [documents]);
 
   if (!isSupabaseConfigured) {
-    return <main className="center-shell"><section className="panel"><h1>Falta configurar Supabase</h1><p>Agrega en Vercel las variables NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY para este ambiente y vuelve a desplegar.</p></section></main>;
+    return <><BrandHeader /><main className="center-shell"><section className="panel"><h1>Falta configurar Supabase</h1><p>Agrega en Vercel las variables NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY para este ambiente y vuelve a desplegar.</p></section></main></>;
   }
 
   if (loadingSession) {
-    return <main className="center-shell"><p role="status">Recuperando tu sesión…</p></main>;
+    return <><BrandHeader /><main className="center-shell"><p role="status">Recuperando tu sesión…</p></main></>;
   }
 
   if (!session) {
     return (
+      <><BrandHeader />
       <main className="login-shell">
         <section className="login-copy">
           <p className="eyebrow">SISTEMA NOTARIAL</p>
@@ -1322,23 +1334,24 @@ export default function HomePage({ initialView = "panel" } = {}) {
           <label>Usuario o correo<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Ejemplo: supervisor" required disabled={busy} /></label>
           <label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required disabled={busy} /></label>
           {(authMessage || sessionRecoveryError) && <div role="status" aria-live="polite" className="notice error">{authMessage || sessionRecoveryError}</div>}
-          <button type="submit" disabled={busy}>{busy ? "Ingresando…" : "Ingresar"}</button>
+          <ActionButton type="submit" icon="check" disabled={busy}>{busy ? "Ingresando…" : "Ingresar"}</ActionButton>
           {sessionRecoveryError && <button type="button" className="secondary" disabled={busy} onClick={() => { setAuthMessage(null); sessionRecoveryRef.current?.load(); }}>Reintentar sesión</button>}
         </form>
       </main>
+      </>
     );
   }
 
   const dataIsCurrent = dataLoad?.userId === sessionUserId && dataLoad?.email === sessionEmail && dataLoad?.attempt === dataLoadAttempt;
   if (!dataIsCurrent || dataLoad.status !== "ready") {
     const failed = dataIsCurrent && dataLoad.status === "error";
-    return <main className="center-shell"><section className="panel data-load-panel" aria-busy={!failed}>
+    return <><BrandHeader /><main className="center-shell"><section className="panel data-load-panel" aria-busy={!failed}>
       <p className="eyebrow">RASTREADOC</p>
       <h1>{failed ? "No se pudo cargar la información" : "Cargando información…"}</h1>
       <p role={failed ? "alert" : "status"}>{failed ? dataLoad.error : "Estamos cargando tus expedientes y documentos. Espera un momento."}</p>
       {failed && <button onClick={() => setDataLoadAttempt((attempt) => attempt + 1)}>Reintentar carga</button>}
       <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
-    </section></main>;
+    </section></main></>;
   }
 
   const normalizedSearch = search.trim().toLocaleLowerCase("es-MX");
@@ -1402,20 +1415,15 @@ export default function HomePage({ initialView = "panel" } = {}) {
   };
   const caseFeedback = <>
     {message?.scope === "caseCreation" && <div role="status" aria-live="polite" className={`notice ${activeView === "alta" ? "" : "page-notice"} ${message.type}`}>{message.text}</div>}
-    {pendingCaseCreation && <div className={activeView === "alta" ? "case-creation-verify" : "page-notice"}><button type="button" className="secondary" onClick={verifyCaseCreation} disabled={busy}>{busy ? "Procesando expediente…" : "Verificar expediente"}</button></div>}
+    {pendingCaseCreation && <div className={activeView === "alta" ? "case-creation-verify" : "page-notice"}><ActionButton type="button" icon="check" className="secondary" onClick={verifyCaseCreation} disabled={busy}>{busy ? "Procesando expediente…" : "Verificar expediente"}</ActionButton></div>}
   </>;
 
   return (
-    <main className="page-shell">
-      <div className="page-heading">
-        <div><p className="eyebrow">{viewTitles[activeView][0]}</p><h1>{viewTitles[activeView][1]}</h1></div>
-        <div className="session-box"><span>En sesión</span><strong>{currentUsername}</strong><small>{ROLE_LABELS[currentRole]}</small><button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button></div>
-      </div>
-      <nav className="main-menu" aria-label="Menú principal">
-        {[["panel", "Panel"], ...(canOperate ? [["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"]] : []), ["consulta", "Buscar"], ["reportes", "Reportes"], ["archivados", "Archivados"], ...(canManageAll ? [["catalogos", "Catálogos"], ["usuarios", "Usuarios"]] : [])].map(([view, label]) => (
-          <button className={activeView === view ? "active" : ""} key={view} onClick={() => openView(view)}>{label}</button>
-        ))}
-      </nav>
+    <WorkspaceShell activeView={activeView} eyebrow={viewTitles[activeView][0]} title={viewTitles[activeView][1]}
+      navigation={[["panel", "Panel"], ...(canOperate ? [["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"]] : []), ["consulta", "Buscar"], ["reportes", "Reportes"], ["archivados", "Archivados"], ...(canManageAll ? [["catalogos", "Catálogos"], ["usuarios", "Usuarios"]] : [])]}
+      onNavigate={openView} username={currentUsername} roleLabel={ROLE_LABELS[currentRole]} onSignOut={() => supabase.auth.signOut()}
+      search={search} onSearch={setSearch} overdueCount={overdueSentDocuments.length + overdueRejectedDocuments.length}
+      summaries={[{ label: "Documentos", value: summaryCounts.documents, icon: "document" }, { label: "Autorizados", value: summaryCounts.authorized, icon: "check" }, { label: "Enviados", value: summaryCounts.sent, icon: "clock" }]}>
       {activeView === "panel" && <section className="dashboard-view">
         <div className="welcome-card">
           <div>
@@ -1424,8 +1432,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
             <p>Botones grandes para la operación diaria: alta, envío, consulta y reportes.</p>
           </div>
           <div className="welcome-actions">
-            <button onClick={() => openView("alta")}>Nuevo expediente</button>
-            <button className="secondary" onClick={() => setActiveView("escanear")}>Escanear documentos</button>
+            <button onClick={() => openView("alta")}><Icon name="plus" />Nuevo expediente</button>
+            <button className="secondary" onClick={() => setActiveView("escanear")}><Icon name="scan" />Escanear documentos</button>
           </div>
         </div>
         <section className="quick-actions" aria-label="Acciones principales">
@@ -1478,7 +1486,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
           <p>Escribe el número exactamente como aparece en tu otro programa.</p>
         </div>
         <label>Número de expediente<input value={number} onChange={(event) => setNumber(event.target.value)} placeholder="Ejemplo: 2548/2026" autoFocus required disabled={documentSaveBlocked} /></label>
-        <button type="submit" disabled={documentSaveBlocked}>{busy ? "Guardando…" : "Guardar expediente"}</button>
+        <ActionButton type="submit" icon="check" disabled={documentSaveBlocked}>{busy ? "Guardando…" : "Guardar expediente"}</ActionButton>
       </form>
       {caseFeedback}
       </div>
@@ -1507,14 +1515,14 @@ export default function HomePage({ initialView = "panel" } = {}) {
         <datalist id="municipality-options">{municipalities.map((item) => <option key={item.id} value={item.name} />)}</datalist>
         {documentType === "OTROS" ? <label>Dependencia manual<input list="agency-options" value={agency} onChange={(event) => setAgency(event.target.value)} placeholder="Escribe o selecciona dependencia" required /></label> : <label>Dependencia automática<select value={agency} onChange={(event) => setAgency(event.target.value)} required disabled={Boolean(DOCUMENT_AGENCY_MAP[documentType.toLocaleUpperCase("es-MX")])}><option value="">Seleccionar dependencia</option>{availableAgencies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>}
         <datalist id="agency-options">{availableAgencies.map((name) => <option key={name} value={name} />)}</datalist>
-        <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</button>
+        <ActionButton type="submit" icon="plus" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</ActionButton>
         </fieldset>
       </form>
       )} />
       </div>
       {lastCreatedDocument && !lastCreatedDocument.archived_at && <section className="panel recent-qr" aria-label="Último documento guardado">
         <div><p className="eyebrow">DOCUMENTO GUARDADO</p><strong>{lastCreatedDocument.case_files.number} · {formatDocumentName(lastCreatedDocument)}</strong><p>Puedes abrir e imprimir su QR desde aquí.</p></div>
-        <button onClick={() => showQr(lastCreatedDocument)} disabled={Boolean(qrTask)}>Ver e imprimir QR</button>
+        <button onClick={() => showQr(lastCreatedDocument)} disabled={Boolean(qrTask)}><Icon name="qr" />Ver e imprimir QR</button>
       </section>}
       </>}
       {message && message.scope !== "caseCreation" && <div role="status" aria-live="polite" className={`notice page-notice ${message.type}`}>{message.text}</div>}
@@ -1553,7 +1561,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
         {scanMode === "RECHAZADO" && <div className="quick-rejection"><label>Motivo para estos rechazos (opcional)<input value={rejectionReason} disabled={documentSaveBlocked} onChange={(event) => setRejectionReason(event.target.value)} maxLength="250" /></label><label>Observaciones (opcional)<input value={movementNotes} disabled={documentSaveBlocked} onChange={(event) => setMovementNotes(event.target.value)} /></label></div>}
         <form className="scan-form" onSubmit={scanDocument}>
           <input ref={scanInputRef} value={scanToken} onChange={(event) => setScanToken(event.target.value)} placeholder="Escanea el QR aquí" aria-label="Código QR" disabled={documentSaveBlocked} />
-          <button type="submit" disabled={documentSaveBlocked}>{busy || processingScan ? "Procesando…" : scanMode ? "Registrar lectura" : "Buscar documento"}</button>
+          <ActionButton type="submit" icon="scan" disabled={documentSaveBlocked}>{busy || processingScan ? "Procesando…" : scanMode ? "Registrar lectura" : "Buscar documento"}</ActionButton>
         </form>
         <p className="scan-mode-help">Espera la confirmación en pantalla antes de escanear el siguiente documento.</p>
         {scannedDocument && (
@@ -1572,19 +1580,18 @@ export default function HomePage({ initialView = "panel" } = {}) {
               <label>Observaciones (opcional)<input value={movementNotes} disabled={documentSaveBlocked} onChange={(event) => setMovementNotes(event.target.value)} /></label>
             </div>}
             {!scanMode && <div className="movement-actions">
-              <button onClick={() => registerMovement("ENVIADO")} disabled={documentSaveBlocked}>Enviar</button>
-              <button onClick={() => registerMovement("EN_OFICINA")} disabled={documentSaveBlocked}>Recibir en oficina</button>
-              <button onClick={() => registerMovement("AUTORIZADO")} disabled={documentSaveBlocked}>Autorizar</button>
-              <button className="danger-button" onClick={() => registerMovement("RECHAZADO")} disabled={documentSaveBlocked}>Rechazar</button>
+              <button onClick={() => registerMovement("ENVIADO")} disabled={documentSaveBlocked}><Icon name="send" />Enviar</button>
+              <button onClick={() => registerMovement("EN_OFICINA")} disabled={documentSaveBlocked}><Icon name="history" />Recibir en oficina</button>
+              <button onClick={() => registerMovement("AUTORIZADO")} disabled={documentSaveBlocked}><Icon name="check" />Autorizar</button>
+              <button className="danger-button" onClick={() => registerMovement("RECHAZADO")} disabled={documentSaveBlocked}><Icon name="close" />Rechazar</button>
             </div>}
             {scanMode && manualMovementReady && <button className="quick-register" onClick={() => registerMovement(scanMode)} disabled={documentSaveBlocked}>Registrar {formatStatus(scanMode)}</button>}
           </div>
         )}
       </section>}
       {activeView === "consulta" && <section className="documents-section standalone">
-        <div className="documents-heading"><div><p className="eyebrow">CONSULTA</p><h2>Todos los documentos</h2></div><button className="secondary" onClick={printSelectedQrLabels} disabled={Boolean(qrTask)}>Imprimir QR seleccionados ({selectedQrIds.length})</button></div>
+        <div className="documents-heading"><div><p className="eyebrow">CONSULTA</p><h2>Todos los documentos</h2></div><button className="secondary" onClick={printSelectedQrLabels} disabled={Boolean(qrTask)}><Icon name="print" />Imprimir QR seleccionados ({selectedQrIds.length})</button></div>
         <div className="document-filters">
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar expediente, documento o dependencia" aria-label="Buscar documentos" />
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filtrar por estatus">
             <option value="">Todos los estatus</option>
             {statusCards.map(([status, label]) => <option value={status} key={status}>{label}</option>)}
@@ -1600,7 +1607,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
             {filteredDocuments.map((document) => (
               <article className="document-row" key={document.id}>
                 <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{["EN_OFICINA", "RECHAZADO", "ENVIADO", "REENVIADO"].includes(document.status) && <span className="time-outside">{statusTimeLabel(document.status)}: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
-                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}>Ver expediente</button>{canOperate && document.status === "RECHAZADO" && <button onClick={() => markRejectedDocumentReady(document)} disabled={documentSaveBlocked}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => prepareSend(document)}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}>Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button><button className="secondary" onClick={() => showQr(document)}>Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}>Archivar</button>}</div>
+                <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}><Icon name="document" />Ver expediente</button>{canOperate && document.status === "RECHAZADO" && <button onClick={() => markRejectedDocumentReady(document)} disabled={documentSaveBlocked}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => prepareSend(document)}><Icon name="send" />Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}><Icon name="edit" />Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}><Icon name="history" />Historial</button><button className="secondary" onClick={() => showQr(document)}><Icon name="qr" />Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}><Icon name="archive" />Archivar</button>}</div>
               </article>
             ))}
           </div>
@@ -1609,7 +1616,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
       {activeView === "reportes" && <section className="reports-section">
         <div className="reports-heading"><div><p className="eyebrow">DOCUMENTOS ACTUALES</p><h2>Reporte por fecha y tipo de documento</h2></div><strong>{reportRangeError ? "Revisa las fechas" : `${filteredReportDocuments.length} documentos`}</strong></div>
         <p className="report-timezone">Fechas y horas de la Ciudad de México.</p>
-        <div className="report-actions"><button onClick={() => openPrintableReport(true)} disabled={Boolean(reportRangeError)}>Imprimir</button><button className="secondary" onClick={exportReportToExcel} disabled={Boolean(reportRangeError)}>Exportar a Excel</button><button className="secondary" onClick={() => openPrintableReport(false)} disabled={Boolean(reportRangeError)}>Ver PDF</button></div>
+        <div className="report-actions"><ActionButton icon="print" onClick={() => openPrintableReport(true)} disabled={Boolean(reportRangeError)}>Imprimir</ActionButton><ActionButton icon="spreadsheet" className="secondary export-excel" onClick={exportReportToExcel} disabled={Boolean(reportRangeError)}>Exportar a Excel</ActionButton><ActionButton icon="pdf" className="secondary export-pdf" onClick={() => openPrintableReport(false)} disabled={Boolean(reportRangeError)}>Ver PDF</ActionButton></div>
         {reportRangeError && <p role="alert" className="notice error">{reportRangeError}</p>}
         <div className="report-filters">
           <label>Seguimiento<select value={reportAlert} onChange={(event) => setReportAlert(event.target.value)}><option value="">Todos los documentos</option><option value="SENT_OVERDUE">Enviados vencidos</option><option value="REJECTED_OVERDUE">Rechazados vencidos</option></select></label>
@@ -1635,7 +1642,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
           <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "document_types", newDocumentTypeName, setNewDocumentTypeName, setDocumentTypes, "Tipo de documento")}>
             <h3>Tipos de documento</h3>
             <label>Nuevo tipo<input value={newDocumentTypeName} onChange={(event) => setNewDocumentTypeName(event.target.value)} placeholder="Ejemplo: PODER" /></label>
-            <button type="submit" disabled={busy}>Agregar tipo</button>
+            <button type="submit" disabled={busy}><Icon name="plus" />Agregar tipo</button>
             <div className="catalog-tags">{availableDocumentTypes.map((name) => {
               const record = documentTypes.find((item) => item.name.toLocaleUpperCase("es-MX") === name.toLocaleUpperCase("es-MX"));
               const isDefault = DEFAULT_DOCUMENT_TYPES.includes(name.toLocaleUpperCase("es-MX"));
@@ -1645,7 +1652,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
           <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "agencies", newAgencyName, setNewAgencyName, setAgencies, "Dependencia")}>
             <h3>Dependencias</h3>
             <label>Nueva dependencia<input value={newAgencyName} onChange={(event) => setNewAgencyName(event.target.value)} placeholder="Ejemplo: SECRETARÍA" /></label>
-            <button type="submit" disabled={busy}>Agregar dependencia</button>
+            <button type="submit" disabled={busy}><Icon name="plus" />Agregar dependencia</button>
             <div className="catalog-tags">
               {agencies.map((record) => <span className={isObsoleteAgencyName(record.name) ? "catalog-invalid" : ""} key={record.id}>{record.name}{canManageAll && <button type="button" className="catalog-delete" onClick={() => deleteCatalogItem("agencies", record, setAgencies, "Dependencia")} disabled={busy} aria-label={`Eliminar ${record.name}`}>×</button>}</span>)}
               {DEFAULT_AGENCIES.filter((name) => !agencies.some((record) => record.name.toLocaleUpperCase("es-MX") === name.toLocaleUpperCase("es-MX"))).map((name) => <span key={name}>{name}</span>)}
@@ -1654,19 +1661,19 @@ export default function HomePage({ initialView = "panel" } = {}) {
           <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "lawyers", newLawyerName, setNewLawyerName, setLawyers, "Abogado")}>
             <h3>Abogados</h3>
             <label>Nombre del abogado<input value={newLawyerName} onChange={(event) => setNewLawyerName(event.target.value)} placeholder="Ejemplo: LIC. ANA PÉREZ" required /></label>
-            <button type="submit" disabled={busy}>Agregar abogado</button>
+            <button type="submit" disabled={busy}><Icon name="plus" />Agregar abogado</button>
             <div className="catalog-tags">{lawyers.map((record) => <span key={record.id}>{record.name}{canManageAll && <button type="button" className="catalog-delete" onClick={() => deleteCatalogItem("lawyers", record, setLawyers, "Abogado")} disabled={busy} aria-label={`Eliminar ${record.name}`}>×</button>}</span>)}</div>
           </form>
           <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "auxiliaries", newAuxiliaryName, setNewAuxiliaryName, setAuxiliaries, "Auxiliar")}>
             <h3>Auxiliares</h3>
             <label>Nombre del auxiliar<input value={newAuxiliaryName} onChange={(event) => setNewAuxiliaryName(event.target.value)} placeholder="Ejemplo: MARÍA LÓPEZ" required /></label>
-            <button type="submit" disabled={busy}>Agregar auxiliar</button>
+            <button type="submit" disabled={busy}><Icon name="plus" />Agregar auxiliar</button>
             <div className="catalog-tags">{auxiliaries.map((record) => <span key={record.id}>{record.name}{canManageAll && <button type="button" className="catalog-delete" onClick={() => deleteCatalogItem("auxiliaries", record, setAuxiliaries, "Auxiliar")} disabled={busy} aria-label={`Eliminar ${record.name}`}>×</button>}</span>)}</div>
           </form>
           <form className="catalog-card" onSubmit={(event) => addCatalogItem(event, "municipalities", newMunicipalityName, setNewMunicipalityName, setMunicipalities, "Municipio")}>
             <h3>Municipios</h3>
             <label>Nuevo municipio<input value={newMunicipalityName} onChange={(event) => setNewMunicipalityName(event.target.value)} placeholder="Escribe un municipio adicional" required /></label>
-            <button type="submit" disabled={busy}>Agregar municipio</button>
+            <button type="submit" disabled={busy}><Icon name="plus" />Agregar municipio</button>
             <div className="catalog-tags">{municipalities.map((record) => <span key={record.id}>{record.name}{canManageAll && <button type="button" className="catalog-delete" onClick={() => deleteCatalogItem("municipalities", record, setMunicipalities, "Municipio")} disabled={busy} aria-label={`Eliminar ${record.name}`}>×</button>}</span>)}</div>
           </form>
         </div>
@@ -1680,18 +1687,18 @@ export default function HomePage({ initialView = "panel" } = {}) {
             <label>Usuario<input value={newUsername} onChange={(event) => setNewUsername(event.target.value)} placeholder="Ejemplo: supervisor1" required /></label>
             <label>Contraseña<input type="password" value={newUserPassword} onChange={(event) => setNewUserPassword(event.target.value)} placeholder="Mínimo 6 caracteres" required /></label>
             <label>Permiso<select value={newUserRole} onChange={(event) => setNewUserRole(event.target.value)}>{Object.entries(ROLE_LABELS).map(([role, label]) => <option key={role} value={role}>{label}</option>)}</select></label>
-            <button type="submit" disabled={busy}>{busy ? "Creando…" : "Crear usuario"}</button>
+            <ActionButton type="submit" icon="users" disabled={busy}>{busy ? "Creando…" : "Crear usuario"}</ActionButton>
           </form>
           <div className="user-card">
             <h3>Usuarios creados</h3>
-            <div className="user-list">{profiles.length === 0 ? <p className="empty-state">Todavía no hay usuarios registrados en perfiles.</p> : profiles.map((profile) => <div className="user-list-row" key={profile.id}><div><strong>{profile.username}</strong><span>{ROLE_LABELS[profile.role] ?? profile.role}</span></div><label>Nueva contraseña<input type="password" value={passwordDrafts[profile.id] ?? ""} onChange={(event) => setPasswordDrafts((current) => ({ ...current, [profile.id]: event.target.value }))} placeholder="Mínimo 6 caracteres" /></label><button type="button" className="secondary" onClick={() => changeUserPassword(profile)} disabled={busy}>Cambiar contraseña</button><button type="button" className="archive-button" onClick={() => deleteSystemUser(profile)} disabled={busy || profile.id === session.user.id}>Eliminar</button></div>)}</div>
+            <div className="user-list">{profiles.length === 0 ? <p className="empty-state">Todavía no hay usuarios registrados en perfiles.</p> : profiles.map((profile) => <div className="user-list-row" key={profile.id}><div><strong>{profile.username}</strong><span>{ROLE_LABELS[profile.role] ?? profile.role}</span></div><label>Nueva contraseña<input type="password" value={passwordDrafts[profile.id] ?? ""} onChange={(event) => setPasswordDrafts((current) => ({ ...current, [profile.id]: event.target.value }))} placeholder="Mínimo 6 caracteres" /></label><button type="button" className="secondary" onClick={() => changeUserPassword(profile)} disabled={busy}><Icon name="edit" />Cambiar contraseña</button><button type="button" className="archive-button" onClick={() => deleteSystemUser(profile)} disabled={busy || profile.id === session.user.id}>Eliminar</button></div>)}</div>
           </div>
         </div>}
       </section>}
       {activeView === "archivados" && <section className="archived-section">
         <div className="archived-heading"><div><p className="eyebrow">DOCUMENTOS OCULTOS</p><h2>Archivados</h2><p>Estos documentos no aparecen en la operación diaria, pero conservan todo su historial.</p></div><strong>{archivedDocuments.length} archivados</strong></div>
         {archivedDocuments.length === 0 ? <p className="empty-state">No hay documentos archivados.</p> : <div className="documents-list">
-          {archivedDocuments.map((document) => <article className="document-row archived-row" key={document.id}><div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span><span>Archivado: {formatOfficeDateTime(document.archived_at)}</span></div><div className="row-actions"><button onClick={() => restoreDocument(document)} disabled={busy}>Restaurar</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button></div></article>)}
+          {archivedDocuments.map((document) => <article className="document-row archived-row" key={document.id}><div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span><span>Archivado: {formatOfficeDateTime(document.archived_at)}</span></div><div className="row-actions"><button onClick={() => restoreDocument(document)} disabled={busy}><Icon name="history" />Restaurar</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}><Icon name="history" />Historial</button></div></article>)}
         </div>}
       </section>}
       {casePreview && (
@@ -1727,7 +1734,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
                     <strong>{formatOfficeDateTime(document.last_movement_at)}</strong>
                     {isOutsideOffice(document.status) && <small className="time-outside">Fuera: {formatTimeOutside(document.last_movement_at, currentTime)}</small>}
                   </div>
-                  <div className="case-document-actions">{canOperate && document.status === "RECHAZADO" && <button onClick={() => { setCasePreview(null); markRejectedDocumentReady(document); }}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => { setCasePreview(null); prepareSend(document); }}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => { setCasePreview(null); prepareCorrection(document); }}>Editar</button>}<button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}>Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>QR</button></div>
+                  <div className="case-document-actions">{canOperate && document.status === "RECHAZADO" && <button onClick={() => { setCasePreview(null); markRejectedDocumentReady(document); }}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => { setCasePreview(null); prepareSend(document); }}><Icon name="send" />Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => { setCasePreview(null); prepareCorrection(document); }}><Icon name="edit" />Editar</button>}<button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}><Icon name="history" />Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>QR</button></div>
                 </article>
               ))}
             </div>
@@ -1743,7 +1750,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
             <p>{formatDocumentName(qrPreview.document)} · {qrPreview.document.agencies.name}</p><small>Formato de impresión: etiqueta 40 × 30 mm</small>
             {qrPreview.dataUrl ? <img src={qrPreview.dataUrl} alt={`QR del expediente ${qrPreview.document.case_files.number}`} /> : qrPreview.error ? <><p role="alert">No fue posible generar el QR. El documento sigue guardado.</p><button onClick={() => showQr(qrPreview.document)}>Volver a generar QR</button></> : <p aria-live="polite">Preparando QR…</p>}
             {qrPreview.printError && <p role="alert">{qrPreview.printError}</p>}
-            <button onClick={printQr} disabled={!qrPreview.dataUrl || Boolean(qrTask)}>Imprimir etiqueta 40 × 30 mm</button>
+            <button onClick={printQr} disabled={!qrPreview.dataUrl || Boolean(qrTask)}><Icon name="print" />Imprimir etiqueta 40 × 30 mm</button>
           </section>
         </div>
       )}
@@ -1780,6 +1787,6 @@ export default function HomePage({ initialView = "panel" } = {}) {
           </form>
         </div>
       )}
-    </main>
+    </WorkspaceShell>
   );
 }

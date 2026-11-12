@@ -1,4 +1,5 @@
 import "./globals.css";
+import "./redesign.css";
 
 export const metadata = {
   title: "RASTREADOC",
@@ -8,16 +9,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="es">
-      <body>
-        <header className="site-header">
-          <div className="brand-mark">R</div>
-          <div>
-            <strong>RASTREADOC</strong>
-            <span>Control documental</span>
-          </div>
-        </header>
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

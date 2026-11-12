@@ -362,8 +362,8 @@ class BrowserOperations(unittest.TestCase):
     base_url = None
     browser = None
 
-    def open_login(self, scenario, configure=None, expired_session=False, timezone_id="UTC"):
-        context = self.browser.new_context(timezone_id=timezone_id)
+    def open_login(self, scenario, configure=None, expired_session=False, timezone_id="UTC", context_options=None):
+        context = self.browser.new_context(timezone_id=timezone_id, **(context_options or {}))
         self.addCleanup(context.close)
         fixture = SupabaseFixture(self.base_url, scenario)
         if configure:
@@ -385,12 +385,12 @@ class BrowserOperations(unittest.TestCase):
         self.addCleanup(lambda: self.assertEqual(fixture.direct_writes, [], "UI must use the atomic RPC"))
         return page, fixture
 
-    def open_app(self, scenario, configure=None, timezone_id="UTC"):
-        page, fixture = self.open_login(scenario, configure, timezone_id=timezone_id)
+    def open_app(self, scenario, configure=None, timezone_id="UTC", context_options=None):
+        page, fixture = self.open_login(scenario, configure, timezone_id=timezone_id, context_options=context_options)
         page.get_by_label("Usuario o correo").fill("prueba")
         page.get_by_label("Contraseña", exact=True).fill("fictional-test-password")
         page.get_by_role("button", name="Ingresar", exact=True).click()
-        expect(page.get_by_role("navigation", name="Menú principal")).to_be_visible()
+        expect(page.locator(".workspace-app")).to_be_visible()
         expect(page.get_by_text("prueba", exact=True).first).to_be_visible()
         return page, fixture
 
@@ -412,6 +412,98 @@ class BrowserOperations(unittest.TestCase):
         expect(page.get_by_role("navigation", name="Menú principal")).to_be_visible()
         self.assertGreaterEqual(len(fixture.auth_attempts), 2)
         return page, fixture
+
+    def visual_navigate(self, page, label):
+        toggle = page.get_by_role("button", name="Abrir menú de navegación", exact=True)
+        if toggle.is_visible() and toggle.get_attribute("aria-expanded") == "false":
+            toggle.click()
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name=label, exact=True).click()
+        if toggle.is_visible():
+            expect(page.get_by_role("navigation", name="Menú principal")).not_to_be_visible()
+
+    @staticmethod
+    def visual_fixture(fixture):
+        for index, status in [(2, "AUTORIZADO"), (3, "ENVIADO")]:
+            document = copy.deepcopy(fixture.document)
+            document.update(id=f"aaaaaaaa-aaaa-4aaa-8aaa-{index:012d}", status=status, last_movement_at="2026-01-02T12:00:00+00:00")
+            document["case_files"] = {"number": f"TEST-{index:03d}"}
+            fixture.extra_documents.append(document)
+
+    def test_visual_desktop_all_sections_keep_real_indicators_and_controls(self):
+        page, fixture = self.open_app("normal", configure=self.visual_fixture, context_options={"viewport": {"width": 1774, "height": 1000}, "locale": "es-MX"})
+        page.add_style_tag(content="nextjs-portal { display:none !important; }")
+        expect(page.locator(".summary-value")).to_have_text(["3", "1", "1"])
+        expect(page.locator(".notification-count")).to_have_text("1")
+        expect(page.locator(".brand-mark")).to_have_count(1)
+        sections = {
+            "Panel": ("panel", ".dashboard-view"), "Alta": ("alta", ".workspace-grid"),
+            "Boletas": ("boletas", ".receipt-section"), "Escanear": ("escanear", ".scanner-section"),
+            "Buscar": ("buscar", ".documents-section"), "Reportes": ("reportes", ".reports-section"),
+            "Archivados": ("archivados", ".archived-section"), "Catálogos": ("catalogos", ".catalogs-section"),
+            "Usuarios": ("usuarios", ".users-section"),
+        }
+        for label, (slug, selector) in sections.items():
+            self.visual_navigate(page, label)
+            expect(page.locator(selector)).to_be_visible()
+            expect(page.get_by_role("navigation", name="Menú principal").get_by_role("button", name=label, exact=True)).to_have_attribute("aria-current", "page")
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 1775, label)
+            page.screenshot(path=f"/tmp/rastreodoc-rediseno-{slug}-desktop.png", full_page=True, animations="disabled")
+        self.assertEqual(fixture.creations, [])
+        self.assertEqual(fixture.case_creations, [])
+        self.assertEqual(fixture.operations, [])
+
+    def test_visual_phone_and_tablet_navigation_preserve_forms_without_horizontal_overflow(self):
+        for name, width, height in [("iphone", 390, 844), ("android", 412, 915), ("tablet", 768, 1024)]:
+            with self.subTest(device=name):
+                page, fixture = self.open_app("normal", context_options={"viewport": {"width": width, "height": height}, "is_mobile": True, "has_touch": True, "locale": "es-MX"})
+                page.add_style_tag(content="nextjs-portal { display:none !important; }")
+                toggle = page.get_by_role("button", name="Abrir menú de navegación", exact=True)
+                expect(toggle).to_be_visible()
+                toggle.click()
+                expect(toggle).to_have_attribute("aria-expanded", "true")
+                page.keyboard.press("Escape")
+                expect(toggle).to_have_attribute("aria-expanded", "false")
+                expect(toggle).to_be_focused()
+                for label in ["Panel", "Alta", "Boletas", "Escanear", "Buscar", "Reportes", "Archivados", "Catálogos", "Usuarios"]:
+                    self.visual_navigate(page, label)
+                    expect(toggle).to_have_attribute("aria-expanded", "false")
+                    self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width + 1, f"{name}: {label}")
+                self.visual_navigate(page, "Alta")
+                page.get_by_label("Número de expediente", exact=True).fill("BORRADOR-VISUAL")
+                self.visual_navigate(page, "Reportes")
+                page.screenshot(path=f"/tmp/rastreodoc-rediseno-reportes-{name}.png", full_page=True, animations="disabled")
+                self.visual_navigate(page, "Alta")
+                expect(page.get_by_label("Número de expediente", exact=True)).to_have_value("BORRADOR-VISUAL")
+                page.screenshot(path=f"/tmp/rastreodoc-rediseno-alta-{name}.png", full_page=True, animations="disabled")
+                self.assertEqual(fixture.creations, [])
+                self.assertEqual(fixture.case_creations, [])
+
+    def test_visual_navigation_keeps_the_existing_role_options(self):
+        common = ["Panel", "Alta", "Boletas", "Escanear", "Buscar", "Reportes", "Archivados"]
+        for role, expected in [("admin", [*common, "Catálogos", "Usuarios"]), ("supervisor", [*common, "Catálogos", "Usuarios"]), ("empleado", common), ("consulta", ["Panel", "Buscar", "Reportes", "Archivados"])]:
+            with self.subTest(role=role):
+                def profile(fixture):
+                    fixture.rows["profiles"][0]["role"] = role
+                page, _ = self.open_app("normal", configure=profile)
+                for navigation in ["Menú principal", "Accesos de sección"]:
+                    expect(page.get_by_role("navigation", name=navigation).get_by_role("button")).to_have_text(expected)
+
+    def test_visual_top_search_reuses_the_existing_filter_and_preserves_it_between_views(self):
+        page, fixture = self.open_app("normal")
+        initial_reads = len(fixture.reads)
+        search = page.get_by_label("Buscar documentos", exact=True)
+        expect(search).to_be_disabled()
+        self.visual_navigate(page, "Buscar")
+        expect(search).to_be_enabled()
+        search.fill("NO-HAY")
+        expect(page.get_by_text("No hay documentos que coincidan con la búsqueda.", exact=True)).to_be_visible()
+        self.visual_navigate(page, "Reportes")
+        expect(search).to_be_disabled()
+        self.visual_navigate(page, "Buscar")
+        expect(search).to_have_value("NO-HAY")
+        search.fill("")
+        expect(page.locator(".document-row")).to_have_count(1)
+        self.assertEqual(len(fixture.reads), initial_reads)
 
     def start_data_load(self, page):
         page.get_by_label("Usuario o correo").fill("prueba")

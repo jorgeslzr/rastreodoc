@@ -33,6 +33,10 @@
   31542aa3be742729b177ce37649cc9b957471ce1. Se verificaron sus quince señales
   públicas y el backend real; el usuario confirmó después el panel y la consulta
   de un expediente conocido con sus documentos en producción.
+- La sexta entrega, de altas de expedientes y avisos junto a Guardar expediente,
+  se publicó en ece47bd469cff0ab4370145897ec7b82e028f21c. Se verificaron sus veinte
+  señales públicas y el backend esperado. El usuario confirmó los avisos en
+  producción antes de solicitar el rediseño visual.
 - Se comprobó en sus archivos públicos que la app incorpora 8192 para el indicador
   de almacenamiento y la dirección del proyecto Supabase esperado. Ese indicador
   es una referencia del plan, no una medición del espacio libre físico del disco.
@@ -262,6 +266,30 @@ capturarlo en minúsculas confirmó el aviso «ya existe» y la selección del m
 expediente. Después pidió colocar los avisos debajo de Guardar expediente.
 Confirmó esa ubicación en el Preview 5d0e498 al volver a capturar el mismo
 expediente y autorizó publicar la entrega con «publicala de una vez».
+Se publicó ece47bd mediante push normal, se verificó la nueva versión pública y
+el usuario confirmó después «Listo, ya aparecen» sobre los avisos en producción.
+
+## Séptima entrega: rediseño visual
+
+El usuario pidió un rediseño completo basado en su referencia, conservando
+funciones, campos, permisos, rutas, procesos y QR. Se reutilizan Next.js, React
+y CSS; los componentes de presentación están separados de los manejadores de
+negocio existentes. La descripción y archivos están en REDISENO_VISUAL.md.
+
+Se aplican la paleta grafito/blanco/gris cálido/dorado, menú lateral, cabecera,
+tarjetas, iconos y formularios a las nueve secciones. Los indicadores usan datos
+existentes; el buscador conserva el alcance de Buscar y la campana representa
+el seguimiento vencido existente. No se agregan procesos de notificación ni
+generación de reportes, y se conserva la tabla con todos sus campos.
+
+El usuario revisará el rediseño en Preview antes de publicarlo en producción.
+Se aprobaron 67 pruebas JavaScript y 45 de navegador. Las comprobaciones nuevas
+recorren las nueve secciones y los cuatro perfiles, comprueban indicadores reales,
+búsqueda existente y navegación responsive sin desbordamiento ni pérdida de
+borradores. Tras el último ajuste de cuadrícula se repitieron los cuatro casos
+visuales. Lint sin errores y la advertencia previa de imagen QR. No se repitió
+PostgreSQL al no modificarse SQL; las comprobaciones previas permanecen registradas.
+La compilación de producción es correcta y conserva las rutas existentes.
 
 ## Validación reproducible
 
@@ -421,6 +449,6 @@ no recurre a guardados separados si la función no está disponible.
 - Vercel: https://vercel.com/jasg/rastreodoc
 - Supabase: https://supabase.com/dashboard/project/vmmafjnhtluinmmjyigv
 
-Las cinco primeras entregas están publicadas en main hasta 31542aa. La sexta se
-desarrolla en codex/alta-expedientes-confiable y se valida usando codex/rastreadoc-pruebas,
+Las seis primeras entregas están publicadas en main hasta ece47bd. La séptima se
+desarrolla en codex/rediseno-visual-rastreadoc y se valida usando codex/rastreadoc-pruebas,
 que conserva los overrides del proyecto Free. No necesita ejecutar migraciones.
