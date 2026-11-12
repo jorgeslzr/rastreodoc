@@ -56,7 +56,7 @@ No se modificaron perfiles ni políticas de roles existentes. La eliminación
 permanente, la sincronización automática entre computadoras, la paginación y la
 revisión de fechas de reportes quedan para otras etapas.
 
-## Segunda entrega: alta y QR, para validar en Preview
+## Segunda entrega: alta y QR, validada en Preview
 
 El usuario identificó lentitud al dar de alta documentos y al generar/imprimir
 QR. Esta entrega se enfoca en esos pasos y no necesita migraciones ni cambios
@@ -88,9 +88,22 @@ de infraestructura:
 - Los cruces de documentos con boletas se indexan una vez y se memoizan; ya no
   se busca en todo el historial por cada documento y cada tecla de captura.
 
-Pendiente de esta entrega: validación en el Preview de la rama configurada y
-con la impresora/lector reales del usuario antes de publicar en main. La prueba
-de PDF verifica geometría y páginas; no mide el tiempo físico de la impresora.
+El usuario confirmó estas pruebas manuales en el Preview de la rama configurada,
+con el código 60da4e4 y registros ficticios del proyecto Free:
+
+- El alta mostró Ver e imprimir QR junto al documento guardado.
+- La impresión individual abrió rápido y salió completa y legible, según su
+  confirmación cualitativa. No se midió un tiempo numérico.
+- Buscar mostró un único documento con el identificador de prueba, y su Historial
+  contenía un único movimiento inicial Listo para enviar.
+- Se creó otro documento de tipo diferente y se imprimieron juntos: el usuario
+  confirmó dos etiquetas completas, una CERTIFICADO y otra ISAI.
+
+La lectura con el lector físico está pendiente: el usuario no tiene ese equipo
+en esta computadora. Las pruebas automáticas verifican que se mantiene el contenido
+QR anterior, pero no sustituyen esa comprobación de hardware. La publicación en
+main queda pendiente de la instrucción del usuario. La prueba local de PDF valida
+geometría y páginas, sin medir el tiempo físico de la impresora.
 
 ## Validación reproducible
 
@@ -217,4 +230,4 @@ no recurre a guardados separados si la función no está disponible.
 La primera entrega está en producción en e9f7e59. La segunda se desarrolla en
 codex/alta-y-qr-rapidos y se valida usando codex/rastreadoc-pruebas, que conserva
 los overrides del proyecto Free. Su publicación en main queda pendiente de la
-prueba del usuario; no requiere volver a ejecutar la migración de guardados.
+instrucción del usuario; no requiere volver a ejecutar la migración de guardados.
