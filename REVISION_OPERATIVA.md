@@ -110,7 +110,7 @@ geometría y páginas, sin medir el tiempo físico de la impresora.
 
 ## Tercera entrega: mensajes de acceso y recuperación de sesión
 
-Preparada para validar en el Preview aislado del proyecto Free:
+Validada en el Preview aislado del proyecto Free:
 
 - El mensaje de usuario/contraseña incorrectos se reserva para errores de
   credenciales confirmados. Los fallos de conexión, servicio y límite de intentos
@@ -131,8 +131,13 @@ Preparada para validar en el Preview aislado del proyecto Free:
   caído se probó en navegador: ofrece reintentar y se recupera al volver el
   servicio, sin pedir de nuevo la contraseña.
 
+El usuario confirmó en Preview el mensaje correcto al introducir una contraseña
+incorrecta y que Ingresar vuelve a habilitarse. Después confirmó acceso con la
+contraseña correcta, sesión conservada tras Ctrl+F5 y consulta de PRUEBA-001.
+Estas pruebas manuales corresponden al código cf8f24c.
+
 Esta entrega no cambia roles, claves, variables o esquema de Supabase. Su
-publicación en producción requiere primero la validación del usuario en Preview.
+publicación en producción queda pendiente de la instrucción del usuario.
 
 ## Validación reproducible
 
@@ -249,7 +254,7 @@ no recurre a guardados separados si la función no está disponible.
   necesitan respaldo aparte de la base de datos.
 - Preparar una copia externa y su proceso de comprobación.
 - Los mensajes y límites de espera de getSession/signIn están corregidos en la
-  tercera entrega, pendiente de validación en Preview y publicación coordinada.
+  tercera entrega, validada en Preview y pendiente de publicación coordinada.
   No se establecieron como causa de la antigua incidencia de acceso a Preview.
 
 ## Proyectos
