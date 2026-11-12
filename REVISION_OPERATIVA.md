@@ -208,8 +208,15 @@ resultados:
 - No hay cambios SQL, infraestructura, claves, roles, dependencias ni protocolos
   de escritura. Se conserva la verificación de guardados inciertos.
 
-La validación manual del usuario en Preview y la publicación de esta quinta
-entrega están pendientes.
+El usuario confirmó Ready del Preview 0f93f50. Después de indicarle recargar el
+alias fijo y entrar con pruebas, confirmó el panel y los mismos documentos de
+PRUEBA-001 en Buscar. En Alta confirmó el expediente y la dependencia REGISTRO
+PÚBLICO al elegir CERTIFICADO. En Reportes confirmó los mismos documentos de
+Buscar, con sus fechas y horas de último movimiento.
+
+La publicación en producción de esta quinta entrega está pendiente de la
+instrucción del usuario. Los errores de red y esperas se verificaron en las
+pruebas automatizadas; no se interrumpió la conexión de la oficina para probarlos.
 
 ## Validación reproducible
 
