@@ -259,9 +259,9 @@ el número capturado y un UUID propio hasta confirmar el resultado:
 El usuario confirmó en el Preview 3084270 que PRUEBA-EXP-12NOV se guarda, se
 limpia el campo superior y queda seleccionado para agregar documentos. Al
 capturarlo en minúsculas confirmó el aviso «ya existe» y la selección del mismo
-expediente. Después pidió colocar los avisos debajo de Guardar expediente;
-ese ajuste visual se incluye en la revisión siguiente. La comprobación manual
-de la ubicación nueva y la publicación de esta sexta entrega están pendientes.
+expediente. Después pidió colocar los avisos debajo de Guardar expediente.
+Confirmó esa ubicación en el Preview 5d0e498 al volver a capturar el mismo
+expediente y autorizó publicar la entrega con «publicala de una vez».
 
 ## Validación reproducible
 
