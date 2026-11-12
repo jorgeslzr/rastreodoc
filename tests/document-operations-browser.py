@@ -55,6 +55,7 @@ class SupabaseFixture:
         self.operations = []
         self.auth_attempts = []
         self.held_auth = None
+        self.held_load = None
         self.reads = []
         self.creations = []
         self.created_documents = {}
@@ -189,8 +190,36 @@ class SupabaseFixture:
                 return
             query = parse_qs(parsed.query)
             self.reads.append({"table": table, "query": query})
+            if self.scenario == "load_delayed" and table == "case_files":
+                self.held_load = (route, copy.deepcopy(self.rows[table]))
+                return
+            if self.scenario == "load_connection" and table == "case_files":
+                route.abort("connectionfailed")
+                return
+            if self.scenario == "load_catalog_error" and table == "agencies":
+                self.fulfill(route, {"code": "503", "message": "Fictional catalog failure"}, 503)
+                return
+            if self.scenario == "load_transient_catalog" and table == "agencies" and sum(read["table"] == "agencies" for read in self.reads) == 1:
+                self.fulfill(route, {"code": "503", "message": "Fictional transient catalog failure"}, 503)
+                return
+            if self.scenario == "load_catalog_null" and table == "agencies":
+                self.fulfill(route, None)
+                return
             if table == "documents":
                 archived = query.get("archived_at", [""])[0]
+                if self.scenario == "load_document_error" and archived == "is.null":
+                    self.fulfill(route, {"code": "503", "message": "Fictional document failure"}, 503)
+                    return
+                if self.scenario.startswith("load_schema_") and "lawyer_id" in query.get("select", [""])[0]:
+                    self.fulfill(route, {"code": self.scenario.removeprefix("load_schema_"), "message": "Fictional missing optional column"}, 400)
+                    return
+                if self.scenario == "load_page_failure" and archived == "is.null":
+                    if int(query.get("offset", [0])[0]) >= 1000:
+                        self.fulfill(route, {"code": "503", "message": "Fictional second page failure"}, 503)
+                    else:
+                        rows = [{**copy.deepcopy(self.document), "id": f"aaaaaaaa-aaaa-4aaa-8aaa-{index:012d}"} for index in range(1000)]
+                        self.fulfill(route, rows)
+                    return
                 rows = [] if archived == "not.is.null" else copy.deepcopy([self.document, *self.extra_documents, *self.created_documents.values()])
                 if "id" in query:
                     document_id = query["id"][0].removeprefix("eq.")
@@ -235,6 +264,11 @@ class SupabaseFixture:
         route = self.held_auth
         self.held_auth = None
         self.respond_auth(route, "/auth/v1/token")
+
+    def release_load(self, rows=None):
+        route, original = self.held_load
+        self.held_load = None
+        self.fulfill(route, original if rows is None else rows)
 
     def respond_operation(self, route, args):
         if self.scenario == "conflict" and len(self.operations) == 1:
@@ -337,6 +371,117 @@ class BrowserOperations(unittest.TestCase):
         expect(page.get_by_role("navigation", name="Menú principal")).to_be_visible()
         self.assertGreaterEqual(len(fixture.auth_attempts), 2)
         return page, fixture
+
+    def start_data_load(self, page):
+        page.get_by_label("Usuario o correo").fill("prueba")
+        page.get_by_label("Contraseña", exact=True).fill("fictional-test-password")
+        page.get_by_role("button", name="Ingresar", exact=True).click()
+
+    def assert_loaded_document(self, page):
+        navigation = page.get_by_role("navigation", name="Menú principal")
+        expect(navigation).to_be_visible()
+        navigation.get_by_role("button", name="Buscar", exact=True).click()
+        expect(page.locator(".document-row")).to_have_count(1)
+        expect(page.locator(".document-row")).to_contain_text("TEST-001 · CERTIFICADO — Original")
+
+    def test_loading_waits_for_the_last_query_before_showing_counts_or_capture(self):
+        page, fixture = self.open_login("load_delayed")
+        self.start_data_load(page)
+        expect(page.get_by_role("heading", name="Cargando información…", exact=True)).to_be_visible()
+        expect(page.get_by_role("navigation", name="Menú principal")).not_to_be_visible()
+        expect(page.locator(".dashboard-cards, .reports-section, .case-panel")).to_have_count(0)
+        self.assertEqual(fixture.creations, [])
+        self.assertEqual(fixture.operations, [])
+        deadline = time.monotonic() + 5
+        while fixture.held_load is None and time.monotonic() < deadline:
+            page.wait_for_timeout(20)
+        self.assertIsNotNone(fixture.held_load)
+        fixture.release_load()
+        self.assert_loaded_document(page)
+
+    def test_loading_failed_network_catalog_or_null_response_requires_retry(self):
+        for scenario in ["load_connection", "load_catalog_error", "load_catalog_null"]:
+            with self.subTest(scenario=scenario):
+                page, fixture = self.open_login(scenario)
+                self.start_data_load(page)
+                panel = page.locator(".data-load-panel")
+                # The SDK retries idempotent reads after 1s, 2s and 4s. Allow
+                # those real retries, without disabling production behavior.
+                expect(panel.get_by_role("alert")).to_have_text("No se pudo cargar la información completa. Revisa tu conexión y pulsa Reintentar carga.", timeout=12000)
+                expect(page.get_by_role("navigation", name="Menú principal")).not_to_be_visible()
+                expect(page.locator(".dashboard-cards, .reports-section, .case-panel")).to_have_count(0)
+                fixture.scenario = "normal"
+                page.get_by_role("button", name="Reintentar carga", exact=True).click()
+                self.assert_loaded_document(page)
+                self.assertEqual(fixture.creations, [])
+                self.assertEqual(fixture.operations, [])
+
+    def test_loading_document_service_failure_does_not_retry_a_reduced_selection(self):
+        page, fixture = self.open_login("load_document_error")
+        self.start_data_load(page)
+        expect(page.locator(".data-load-panel").get_by_role("alert")).to_be_visible(timeout=12000)
+        document_reads = [read for read in fixture.reads if read["table"] == "documents"]
+        self.assertTrue(document_reads)
+        self.assertTrue(all("lawyer_id" in read["query"]["select"][0] for read in document_reads))
+        fixture.scenario = "normal"
+        page.get_by_role("button", name="Reintentar carga", exact=True).click()
+        self.assert_loaded_document(page)
+
+    def test_loading_failure_on_second_page_never_publishes_the_first_thousand_rows(self):
+        page, fixture = self.open_login("load_page_failure")
+        self.start_data_load(page)
+        expect(page.locator(".data-load-panel").get_by_role("alert")).to_be_visible(timeout=12000)
+        expect(page.locator(".document-row, .dashboard-cards, .reports-section")).to_have_count(0)
+        document_reads = [read for read in fixture.reads if read["table"] == "documents"]
+        self.assertTrue(any(read["query"].get("offset") == ["1000"] for read in document_reads))
+        self.assertTrue(all("lawyer_id" in read["query"]["select"][0] for read in document_reads))
+        fixture.scenario = "normal"
+        page.get_by_role("button", name="Reintentar carga", exact=True).click()
+        self.assert_loaded_document(page)
+
+    def test_loading_timeout_recovers_and_ignores_a_late_old_response(self):
+        page, fixture = self.open_login("load_delayed")
+        page.clock.install()
+        self.start_data_load(page)
+        expect(page.get_by_role("heading", name="Cargando información…", exact=True)).to_be_visible()
+        page.wait_for_function("()=>document.querySelector('.data-load-panel')?.getAttribute('aria-busy')==='true'")
+        page.clock.fast_forward(21000)
+        expect(page.locator(".data-load-panel").get_by_role("alert")).to_contain_text("La carga está tardando más de lo esperado.")
+        self.assertIsNotNone(fixture.held_load)
+        fixture.scenario = "normal"
+        page.get_by_role("button", name="Reintentar carga", exact=True).click()
+        self.assert_loaded_document(page)
+        fixture.release_load([{"id": CASE_ID, "number": "OBSOLETE-CASE"}])
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Alta", exact=True).click()
+        expect(page.locator('datalist option[value="TEST-001"]')).to_have_count(1)
+        expect(page.locator('datalist option[value="OBSOLETE-CASE"]')).to_have_count(0)
+
+    def test_loading_logout_cancels_the_old_read_before_a_new_login(self):
+        page, fixture = self.open_login("load_delayed")
+        self.start_data_load(page)
+        expect(page.get_by_role("heading", name="Cargando información…", exact=True)).to_be_visible()
+        page.get_by_role("button", name="Cerrar sesión", exact=True).click()
+        expect(page.get_by_role("button", name="Ingresar", exact=True)).to_be_visible()
+        fixture.scenario = "normal"
+        self.start_data_load(page)
+        self.assert_loaded_document(page)
+        fixture.release_load([{"id": CASE_ID, "number": "OBSOLETE-CASE"}])
+        self.assert_loaded_document(page)
+
+    def test_loading_still_supports_missing_optional_columns(self):
+        for code in ["42703", "PGRST204"]:
+            with self.subTest(code=code):
+                page, fixture = self.open_app(f"load_schema_{code}")
+                self.assert_loaded_document(page)
+                document_reads = [read for read in fixture.reads if read["table"] == "documents"]
+                self.assertTrue(any("lawyer_id" not in read["query"]["select"][0] for read in document_reads))
+
+    def test_loading_recovers_a_transient_service_error_with_the_sdk_retry(self):
+        page, fixture = self.open_app("load_transient_catalog")
+        self.assert_loaded_document(page)
+        self.assertEqual(len([read for read in fixture.reads if read["table"] == "agencies"]), 2)
+        expect(page.get_by_role("button", name="Reintentar carga", exact=True)).not_to_be_visible()
+        self.assertEqual(len(fixture.auth_attempts), 1)
 
     def test_auth_incorrect_password_is_specific_and_success_clears_the_password(self):
         page, _ = self.failed_login_then_retry("auth_credentials", "Usuario o contraseña incorrectos")

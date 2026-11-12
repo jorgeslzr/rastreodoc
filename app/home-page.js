@@ -10,6 +10,7 @@ import { findCatalogRecord, indexReportMovements } from "@/lib/office-lookups.mj
 import { buildQrPrintHtml, createQrImageCache, preloadQrLibrary } from "@/lib/qr-labels.mjs";
 import { authErrorMessage, createSessionRecovery, withAuthDeadline } from "@/lib/auth-recovery.mjs";
 import { formatOfficeDateTime, matchesReportDateRange, officeDateKey, reportDateRangeError } from "@/lib/office-dates.mjs";
+import { dataLoadErrorMessage, loadCompleteData } from "@/lib/data-loading.mjs";
 
 const supabase = createClient();
 const DEFAULT_DOCUMENT_TYPES = [
@@ -46,20 +47,22 @@ const DOCUMENT_AGENCY_MAP = {
   "FIRMA CANCELACIÓN INFONAVIT": "INFONAVIT",
 };
 
-async function fetchAllPages(buildQuery) {
+async function fetchAllPages(buildQuery, signal) {
   const rows = [];
 
   for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
-    const { data, error } = await buildQuery(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (signal?.aborted) throw signal.reason;
+    const query = buildQuery(from, from + SUPABASE_PAGE_SIZE - 1);
+    const { data, error } = await (signal ? query.abortSignal(signal) : query);
     if (error) return { data: null, error };
-
-    const page = data ?? [];
+    if (!Array.isArray(data)) return { data: null, error: new Error("Incomplete page response.") };
+    const page = data;
     rows.push(...page);
     if (page.length < SUPABASE_PAGE_SIZE) return { data: rows, error: null };
   }
 }
 
-function fetchReportMovements() {
+function fetchReportMovements(signal) {
   return fetchAllPages((from, to) => supabase
     .from("movements")
     .select(REPORT_MOVEMENT_SELECT)
@@ -67,10 +70,10 @@ function fetchReportMovements() {
     .is("documents.archived_at", null)
     .order("occurred_at", { ascending: false })
     .order("id", { ascending: false })
-    .range(from, to));
+    .range(from, to), signal);
 }
 
-async function fetchDocuments(archived = false) {
+async function fetchDocuments(archived = false, signal) {
   const buildQuery = (select, from, to) => {
     let query = supabase
       .from("documents")
@@ -89,13 +92,14 @@ async function fetchDocuments(archived = false) {
       .range(from, to);
   };
 
-  const result = await fetchAllPages((from, to) => buildQuery(DOCUMENT_SELECT, from, to));
+  const result = await fetchAllPages((from, to) => buildQuery(DOCUMENT_SELECT, from, to), signal);
   if (!result.error) return result;
+  if (signal?.aborted || !["42703", "PGRST204"].includes(result.error.code)) return result;
 
   // Keep existing records visible while PostgREST refreshes its schema cache or
   // when the optional deed/catalog migration has not reached this environment.
   // New fields remain empty, but a missing column must never blank the dashboard.
-  const fallback = await fetchAllPages((from, to) => buildQuery(LEGACY_DOCUMENT_SELECT, from, to));
+  const fallback = await fetchAllPages((from, to) => buildQuery(LEGACY_DOCUMENT_SELECT, from, to), signal);
   if (fallback.error) return fallback;
 
   return {
@@ -112,13 +116,13 @@ async function fetchDocuments(archived = false) {
   };
 }
 
-async function fetchCaseFiles() {
+async function fetchCaseFiles(signal) {
   const fetchWithSelect = (select) => fetchAllPages((from, to) => supabase
     .from("case_files")
     .select(select)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
-    .range(from, to));
+    .range(from, to), signal);
   return fetchWithSelect("id, number");
 }
 
@@ -254,6 +258,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const [loadingSession, setLoadingSession] = useState(true);
   const [authMessage, setAuthMessage] = useState(null);
   const [sessionRecoveryError, setSessionRecoveryError] = useState(null);
+  const [dataLoad, setDataLoad] = useState(null);
+  const [dataLoadAttempt, setDataLoadAttempt] = useState(0);
   const sessionRecoveryRef = useRef(null);
   const signInInFlight = useRef(false);
   const [email, setEmail] = useState("");
@@ -384,7 +390,10 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
     const recovery = createSessionRecovery({
       getSession: () => supabase.auth.getSession(),
-      onSession: setSession,
+      onSession: (nextSession) => {
+        setSession(nextSession);
+        if (!nextSession) setDataLoad(null);
+      },
       onError: setSessionRecoveryError,
       onLoading: setLoadingSession,
     });
@@ -412,25 +421,24 @@ export default function HomePage({ initialView = "panel" } = {}) {
   useEffect(() => {
     if (!sessionUserId) return;
     let active = true;
+    const controller = new AbortController();
 
-    Promise.all([
-      fetchCaseFiles(),
-      supabase.from("document_types").select("id, name").order("name"),
-      supabase.from("agencies").select("id, name").order("name"),
-      supabase.from("lawyers").select("id, name").order("name"),
-      supabase.from("auxiliaries").select("id, name").order("name"),
-      supabase.from("municipalities").select("id, name").order("name"),
-      supabase.from("profiles").select("id, username, role").order("created_at", { ascending: false }),
-      fetchDocuments(),
-      fetchDocuments(true),
-      fetchReportMovements(),
-    ]).then(([caseResult, typeResult, agencyResult, lawyerResult, auxiliaryResult, municipalityResult, profileResult, documentResult, archivedResult, movementResult]) => {
+    loadCompleteData([
+      (signal) => fetchCaseFiles(signal),
+      (signal) => supabase.from("document_types").select("id, name").order("name").abortSignal(signal),
+      (signal) => supabase.from("agencies").select("id, name").order("name").abortSignal(signal),
+      (signal) => supabase.from("lawyers").select("id, name").order("name").abortSignal(signal),
+      (signal) => supabase.from("auxiliaries").select("id, name").order("name").abortSignal(signal),
+      (signal) => supabase.from("municipalities").select("id, name").order("name").abortSignal(signal),
+      (signal) => supabase.from("profiles").select("id, username, role").order("created_at", { ascending: false }).abortSignal(signal),
+      (signal) => fetchDocuments(false, signal),
+      (signal) => fetchDocuments(true, signal),
+      (signal) => fetchReportMovements(signal),
+    ], { signal: controller.signal }).then(([loadedCases, loadedTypes, loadedAgencies, loadedLawyers, loadedAuxiliaries, loadedMunicipalities, loadedProfiles, loadedDocuments, loadedArchives, loadedMovements]) => {
       if (!active) return;
-      setCaseFiles(caseResult.data ?? []);
-      setDocumentTypes(typeResult.data ?? []);
-      setAgencies(agencyResult.data ?? []);
-      const loadedLawyers = lawyerResult.data ?? [];
-      const loadedAuxiliaries = auxiliaryResult.data ?? [];
+      setCaseFiles(loadedCases);
+      setDocumentTypes(loadedTypes);
+      setAgencies(loadedAgencies);
       const lawyersById = new Map(loadedLawyers.map((lawyer) => [lawyer.id, lawyer]));
       const auxiliariesById = new Map(loadedAuxiliaries.map((auxiliaryRecord) => [auxiliaryRecord.id, auxiliaryRecord]));
       const attachCatalogs = (document) => ({
@@ -440,22 +448,21 @@ export default function HomePage({ initialView = "panel" } = {}) {
       });
       setLawyers(loadedLawyers);
       setAuxiliaries(loadedAuxiliaries);
-      setMunicipalities(municipalityResult.data ?? []);
-      setProfiles(profileResult.data ?? []);
-      const sessionProfile = profileResult.data?.find((profile) => profile.id === sessionUserId);
+      setMunicipalities(loadedMunicipalities);
+      setProfiles(loadedProfiles);
+      const sessionProfile = loadedProfiles.find((profile) => profile.id === sessionUserId);
       setCurrentRole(sessionProfile?.role ?? "admin");
       setCurrentUsername(sessionProfile?.username ?? sessionEmail?.split("@")[0] ?? "usuario");
-      setDocuments((documentResult.data ?? []).map(attachCatalogs));
-      setArchivedDocuments((archivedResult.data ?? []).map(attachCatalogs));
-      setReportMovements(movementResult.data ?? []);
-      const loadError = [caseResult, typeResult, agencyResult, lawyerResult, auxiliaryResult, municipalityResult, profileResult, documentResult, archivedResult, movementResult].find((result) => result.error)?.error;
-      if (loadError) setMessage({ type: "error", text: "No fue posible cargar toda la información. Recarga la página; si continúa, revisa que las migraciones estén aplicadas." });
+      setDocuments(loadedDocuments.map(attachCatalogs));
+      setArchivedDocuments(loadedArchives.map(attachCatalogs));
+      setReportMovements(loadedMovements);
+      setDataLoad({ userId: sessionUserId, email: sessionEmail, attempt: dataLoadAttempt, status: "ready", error: null });
       if (sessionProfile?.role === "admin") refreshStorageUsage();
-    }).catch(() => {
-      if (active) setMessage({ type: "error", text: "No fue posible cargar la información. Revisa tu conexión y recarga la página." });
+    }).catch((error) => {
+      if (active) setDataLoad({ userId: sessionUserId, email: sessionEmail, attempt: dataLoadAttempt, status: "error", error: dataLoadErrorMessage(error) });
     });
-    return () => { active = false; };
-  }, [sessionUserId, sessionEmail]);
+    return () => { active = false; controller.abort(); };
+  }, [sessionUserId, sessionEmail, dataLoadAttempt]);
 
   async function refreshReportAfterSave(successText) {
     const version = ++reportRefreshVersion.current;
@@ -470,13 +477,14 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function refreshStorageUsage() {
     setStorageError(false);
-    const { data, error } = await supabase.rpc("get_database_storage_usage");
-    if (error) {
+    try {
+      const { data, error } = await supabase.rpc("get_database_storage_usage").abortSignal(AbortSignal.timeout(20000));
+      if (error) throw error;
+      setStorageUsage(Number(data));
+    } catch {
       setStorageUsage(null);
       setStorageError(true);
-      return;
     }
-    setStorageUsage(Number(data));
   }
 
   async function signIn(event) {
@@ -1297,6 +1305,18 @@ export default function HomePage({ initialView = "panel" } = {}) {
         </form>
       </main>
     );
+  }
+
+  const dataIsCurrent = dataLoad?.userId === sessionUserId && dataLoad?.email === sessionEmail && dataLoad?.attempt === dataLoadAttempt;
+  if (!dataIsCurrent || dataLoad.status !== "ready") {
+    const failed = dataIsCurrent && dataLoad.status === "error";
+    return <main className="center-shell"><section className="panel data-load-panel" aria-busy={!failed}>
+      <p className="eyebrow">RASTREADOC</p>
+      <h1>{failed ? "No se pudo cargar la información" : "Cargando información…"}</h1>
+      <p role={failed ? "alert" : "status"}>{failed ? dataLoad.error : "Estamos cargando tus expedientes y documentos. Espera un momento."}</p>
+      {failed && <button onClick={() => setDataLoadAttempt((attempt) => attempt + 1)}>Reintentar carga</button>}
+      <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
+    </section></main>;
   }
 
   const normalizedSearch = search.trim().toLocaleLowerCase("es-MX");

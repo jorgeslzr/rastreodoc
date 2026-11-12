@@ -26,7 +26,9 @@
   en 5b2261bc2c64fdef69744ef99ac56031f11452f5. Se comprobaron HTTP 200, los ocho
   scripts públicos, sus señales nuevas y el backend real. El usuario confirmó
   después el acceso y consulta en producción. La cuarta entrega, de fechas de
-  reportes, está validada en Preview y pendiente de publicación.
+  reportes, se publicó en 65c11108ad012696575c431a3c7c60976e65e05e. Sus once
+  señales públicas y el backend real se verificaron; el usuario confirmó el
+  horario y los documentos de un expediente conocido en Reportes de producción.
 - Se comprobó en sus archivos públicos que la app incorpora 8192 para el indicador
   de almacenamiento y la dirección del proyecto Supabase esperado. Ese indicador
   es una referencia del plan, no una medición del espacio libre físico del disco.
@@ -64,7 +66,7 @@ No se modificaron perfiles ni políticas de roles existentes. La eliminación
 permanente, la sincronización automática entre computadoras y la paginación
 quedan para otras etapas. Las fechas de reportes se corrigen en la cuarta entrega.
 
-## Segunda entrega: alta y QR, validada en Preview
+## Segunda entrega: alta y QR, publicada en producción
 
 El usuario identificó lentitud al dar de alta documentos y al generar/imprimir
 QR. Esta entrega se enfoca en esos pasos y no necesita migraciones ni cambios
@@ -107,11 +109,11 @@ con el código 60da4e4 y registros ficticios del proyecto Free:
 - Se creó otro documento de tipo diferente y se imprimieron juntos: el usuario
   confirmó dos etiquetas completas, una CERTIFICADO y otra ISAI.
 
-La lectura con el lector físico está pendiente: el usuario no tiene ese equipo
-en esta computadora. Las pruebas automáticas verifican que se mantiene el contenido
-QR anterior, pero no sustituyen esa comprobación de hardware. El usuario autorizó
-publicar esta entrega y confirmó la consulta en producción. La prueba local de PDF valida
-geometría y páginas, sin medir el tiempo físico de la impresora.
+El usuario inicialmente no tenía lector físico en esa computadora; después
+confirmó «listo si se pudo escanear». Queda registrada la lectura física como
+exitosa, sin atribuirle un tiempo medido ni movimientos nuevos. El usuario
+autorizó publicar esta entrega y confirmó la consulta en producción. La prueba
+local de PDF valida geometría y páginas, sin medir el tiempo físico de la impresora.
 
 ## Tercera entrega: mensajes de acceso y recuperación de sesión
 
@@ -173,8 +175,41 @@ deshabilitan las tres salidas. Con ambas fechas en 12/11/2026 y expediente
 PRUEBA-001, confirmó documentos del día y botones habilitados. Después confirmó
 los mismos documentos y fechas/horas en pantalla, Excel y Ver PDF.
 
-La publicación en producción de esta cuarta entrega está pendiente de la
-instrucción del usuario. No requiere migraciones de Supabase.
+Después de validar Preview, el usuario autorizó publicar la cuarta entrega. Se
+envió el SHA fijo 65c1110 a main mediante push normal y el sitio sirvió sus once
+señales públicas, ocho scripts correctos y el backend real. El usuario confirmó
+después el horario de Ciudad de México y documentos de un expediente conocido
+en Reportes de producción. No requirió migraciones de Supabase.
+
+## Quinta entrega: carga completa y reintento
+
+La carga inicial aplicaba resultados vacíos cuando una consulta devolvía error.
+Además, la captura y los reportes podían abrirse antes de terminar de cargar.
+Esta entrega conserva las consultas simultáneas y cambia cómo se presentan sus
+resultados:
+
+- Mientras faltan consultas, se muestra Cargando información. Los contadores,
+  formularios y reportes se abren al completar todos los datos requeridos.
+  Así no se captura sobre catálogos incompletos ni se confunde una consulta
+  fallida con un documento ausente o un resumen de cero documentos.
+- Si falla una consulta o una página posterior, se descarta el conjunto parcial
+  y se ofrece Reintentar carga sin volver a iniciar sesión. Una tabla realmente
+  vacía sigue siendo válida; una respuesta ausente o inválida no lo es.
+- La carga tiene un límite total de 20 segundos, incluidas las páginas y los
+  reintentos de lectura del SDK. Al fallar, expirar o salir se cancelan sus
+  lecturas. Una respuesta antigua no reemplaza la carga nueva.
+- El estado se asocia al usuario, correo e intento actuales. La renovación del
+  token no recarga los catálogos; cerrar sesión invalida la carga anterior.
+- La selección de compatibilidad de documentos se reserva a errores de columna
+  opcional (42703 y PGRST204). Los fallos de conexión/servicio no se transforman
+  en una consulta reducida con datos de escritura o catálogos ausentes.
+- El indicador opcional de espacio maneja errores y límite de espera por
+  separado; su fallo no bloquea los datos principales.
+- No hay cambios SQL, infraestructura, claves, roles, dependencias ni protocolos
+  de escritura. Se conserva la verificación de guardados inciertos.
+
+La validación manual del usuario en Preview y la publicación de esta quinta
+entrega están pendientes.
 
 ## Validación reproducible
 
@@ -217,6 +252,16 @@ sin formatear las fechas de todo el catálogo. La compilación es correcta.
 Las pruebas de PostgreSQL no se repitieron en estas dos entregas porque no
 modifican SQL; se conserva su resultado anterior. Lint sin errores, con la
 advertencia existente sobre la imagen del QR.
+
+Para carga completa se aprobaron 53 pruebas JavaScript y 33 de navegador.
+Los casos nuevos incluyen la última consulta demorada, fallos de conexión y de
+catálogo, respuesta inválida, error tras mil filas en la segunda página,
+reintento completo, deadline y respuesta antigua, salida durante la carga,
+compatibilidad de columnas opcionales y recuperación automática de un 503
+transitorio. Se mantienen los reintentos reales del SDK (1, 2 y 4 segundos);
+las esperas de esas pruebas contemplan ese tiempo. Lint no tiene errores y
+conserva la advertencia previa. PostgreSQL no se repitió, ya que no cambia SQL.
+La compilación Next 16.4.6 es correcta con variables públicas ficticias.
 
 ## Proyecto Supabase de pruebas
 
@@ -302,6 +347,6 @@ no recurre a guardados separados si la función no está disponible.
 - Vercel: https://vercel.com/jasg/rastreodoc
 - Supabase: https://supabase.com/dashboard/project/vmmafjnhtluinmmjyigv
 
-Las tres primeras entregas están publicadas en main hasta 5b2261b. La cuarta se
-desarrolla en codex/fechas-reportes y se valida usando codex/rastreadoc-pruebas,
+Las cuatro primeras entregas están publicadas en main hasta 65c1110. La quinta se
+desarrolla en codex/carga-confiable y se valida usando codex/rastreadoc-pruebas,
 que conserva los overrides del proyecto Free. No necesita ejecutar migraciones.
