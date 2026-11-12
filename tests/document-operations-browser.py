@@ -11,8 +11,10 @@ stops only the process group that it created. It never uses a real database.
 
 import base64
 import copy
+import csv
+from datetime import datetime, timezone
 import http.client
-from io import BytesIO
+from io import BytesIO, StringIO
 import json
 import os
 import re
@@ -198,6 +200,11 @@ class SupabaseFixture:
                     return
             elif table == "movements":
                 rows = copy.deepcopy(self.movements)
+                if query.get("receipt_number") == ["not.is.null"]:
+                    rows = [row for row in rows if row.get("receipt_number") is not None]
+                if "document_id" in query:
+                    identifier = query["document_id"][0].removeprefix("eq.")
+                    rows = [row for row in rows if row.get("document_id", row.get("documents", {}).get("id")) == identifier]
             else:
                 rows = copy.deepcopy(self.rows.get(table, []))
                 if "name" in query:
@@ -280,8 +287,8 @@ class BrowserOperations(unittest.TestCase):
     base_url = None
     browser = None
 
-    def open_login(self, scenario, configure=None, expired_session=False):
-        context = self.browser.new_context()
+    def open_login(self, scenario, configure=None, expired_session=False, timezone_id="UTC"):
+        context = self.browser.new_context(timezone_id=timezone_id)
         self.addCleanup(context.close)
         fixture = SupabaseFixture(self.base_url, scenario)
         if configure:
@@ -303,8 +310,8 @@ class BrowserOperations(unittest.TestCase):
         self.addCleanup(lambda: self.assertEqual(fixture.direct_writes, [], "UI must use the atomic RPC"))
         return page, fixture
 
-    def open_app(self, scenario, configure=None):
-        page, fixture = self.open_login(scenario, configure)
+    def open_app(self, scenario, configure=None, timezone_id="UTC"):
+        page, fixture = self.open_login(scenario, configure, timezone_id=timezone_id)
         page.get_by_label("Usuario o correo").fill("prueba")
         page.get_by_label("Contraseña", exact=True).fill("fictional-test-password")
         page.get_by_role("button", name="Ingresar", exact=True).click()
@@ -375,6 +382,125 @@ class BrowserOperations(unittest.TestCase):
         fixture.scenario = "normal"
         retry.click()
         expect(page.get_by_role("navigation", name="Menú principal")).to_be_visible(timeout=15000)
+
+    @staticmethod
+    def office_date_fixture(fixture):
+        fixture.document.update(label="Antes de medianoche", last_movement_at="2026-11-12T05:30:00.123456+00:00", created_at="2026-11-12T05:30:00.123456+00:00")
+        fixture.document["case_files"] = {"number": "FECHA-A"}
+        second = copy.deepcopy(fixture.document)
+        second.update(id="aaaaaaaa-aaaa-4aaa-8aaa-000000000002", qr_token="bbbbbbbb-bbbb-4bbb-8bbb-000000000002", label="Después de medianoche", last_movement_at="2026-11-12T06:30:00.654321+00:00", created_at="2026-11-12T06:30:00.654321+00:00")
+        second["case_files"] = {"number": "FECHA-B"}
+        fixture.extra_documents.append(second)
+        fixture.rows["case_files"] = [{"id": CASE_ID, "number": "FECHA-A"}, {"id": "cccccccc-cccc-4ccc-8ccc-000000000002", "number": "FECHA-B"}]
+        fixture.movements = [{"id": 1, "document_id": DOC_ID, "status": "EN_OFICINA", "occurred_at": fixture.document["last_movement_at"], "receipt_number": None, "rejection_reason": None, "notes": None}]
+
+    def open_report(self, page):
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Reportes", exact=True).click()
+        expect(page.get_by_text("Fechas y horas de la Ciudad de México.", exact=True)).to_be_visible()
+
+    def test_report_days_follow_mexico_midnight_in_utc_and_other_computer_zones(self):
+        for zone in ["UTC", "America/Los_Angeles"]:
+            with self.subTest(timezone=zone):
+                page, _ = self.open_app("normal", configure=self.office_date_fixture, timezone_id=zone)
+                self.open_report(page)
+                start = page.get_by_label("Desde", exact=True)
+                end = page.get_by_label("Hasta", exact=True)
+                rows = page.locator(".report-table tbody tr")
+                start.fill("2026-11-11")
+                end.fill("2026-11-11")
+                expect(rows).to_have_count(1)
+                expect(rows).to_contain_text("FECHA-A")
+                expect(rows.locator("td").first).to_have_text(re.compile(r"11/11/2026.*23:30:00"))
+                start.fill("2026-11-12")
+                end.fill("2026-11-12")
+                expect(rows).to_have_count(1)
+                expect(rows).to_contain_text("FECHA-B")
+                expect(rows.locator("td").first).to_have_text(re.compile(r"12/11/2026.*00:30:00"))
+                start.fill("")
+                end.fill("2026-11-11")
+                expect(rows).to_contain_text("FECHA-A")
+                end.fill("")
+                start.fill("2026-11-12")
+                expect(rows).to_contain_text("FECHA-B")
+                start.fill("")
+                expect(rows).to_have_count(2)
+
+    def test_report_excel_pdf_and_print_share_the_filtered_office_date(self):
+        page, _ = self.open_app("normal", configure=self.office_date_fixture)
+        self.open_report(page)
+        page.get_by_label("Desde", exact=True).fill("2026-11-11")
+        page.get_by_label("Hasta", exact=True).fill("2026-11-11")
+        # Freeze Date without stopping browser timers: the filename must use the
+        # office day even though UTC is already the next day.
+        page.clock.set_fixed_time(datetime(2026, 11, 12, 5, 30, tzinfo=timezone.utc))
+        with page.expect_download() as downloaded:
+            page.get_by_role("button", name="Exportar a Excel", exact=True).click()
+        download = downloaded.value
+        self.assertEqual(download.suggested_filename, "reporte-rastreadoc-2026-11-11.csv")
+        records = list(csv.reader(StringIO(Path(download.path()).read_text(encoding="utf-8-sig"))))
+        self.assertEqual(len(records), 2)
+        self.assertEqual(len(records[1]), 14)
+        self.assertEqual(records[1][2], "FECHA-A")
+        self.assertRegex(records[1][0], r"11/11/2026.*23:30:00")
+        with page.expect_popup() as viewed:
+            page.get_by_role("button", name="Ver PDF", exact=True).click()
+        popup = viewed.value
+        expect(popup.locator("tbody tr")).to_have_count(1)
+        expect(popup.locator("tbody tr td").first).to_have_text(records[1][0])
+        expect(popup.get_by_text("Fechas y horas de la Ciudad de México.", exact=True)).to_be_visible()
+        self.spy_print(page)
+        with page.expect_popup() as printed:
+            page.get_by_role("button", name="Imprimir", exact=True).click()
+        printing = printed.value
+        printing.wait_for_function("()=>window.__printCalls?.length===1")
+        expect(printing.locator("tbody tr")).to_have_count(1)
+        expect(printing.locator("tbody tr td").first).to_have_text(records[1][0])
+
+    def test_report_inverted_dates_show_a_message_and_disable_exports_until_corrected(self):
+        page, _ = self.open_app("normal", configure=self.office_date_fixture)
+        self.open_report(page)
+        report = page.locator(".reports-section")
+        page.get_by_label("Desde", exact=True).fill("2026-11-12")
+        page.get_by_label("Hasta", exact=True).fill("2026-11-11")
+        expect(report.get_by_role("alert")).to_have_text("La fecha Desde no puede ser posterior a Hasta.")
+        for action in ["Imprimir", "Exportar a Excel", "Ver PDF"]:
+            expect(page.get_by_role("button", name=action, exact=True)).to_be_disabled()
+        expect(page.locator(".reports-heading strong")).to_have_text("Revisa las fechas")
+        page.get_by_label("Hasta", exact=True).fill("2026-11-12")
+        expect(report.get_by_role("alert")).not_to_be_visible()
+        for action in ["Imprimir", "Exportar a Excel", "Ver PDF"]:
+            expect(page.get_by_role("button", name=action, exact=True)).to_be_enabled()
+        expect(page.locator(".report-table tbody tr")).to_contain_text("FECHA-B")
+
+    def test_history_and_case_details_use_the_same_office_time_as_reports(self):
+        page, _ = self.open_app("normal", configure=self.office_date_fixture)
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Buscar", exact=True).click()
+        before_midnight = page.locator(".document-row").filter(has_text="FECHA-A")
+        before_midnight.get_by_role("button", name="Ver expediente", exact=True).click()
+        case = page.get_by_role("dialog", name="Expediente FECHA-A", exact=True)
+        expect(case.locator(".case-document-date strong")).to_have_text(re.compile(r"11/11/2026.*23:30:00"))
+        case.get_by_role("button", name="Historial", exact=True).click()
+        history = page.get_by_role("dialog", name="Historial del documento", exact=True)
+        expect(history.locator(".timeline li")).to_have_count(1)
+        expect(history.locator(".timeline li span")).to_have_text(re.compile(r"11/11/2026.*23:30:00"))
+
+    def test_capture_and_saving_do_not_format_all_report_dates_until_reports_open(self):
+        page, _ = self.open_app("creation_normal")
+        page.evaluate("""()=>{
+          window.__officeDateFormats=0;
+          const original=Intl.DateTimeFormat.prototype.formatToParts;
+          Intl.DateTimeFormat.prototype.formatToParts=function(...args){
+            if(this.resolvedOptions().timeZone==='America/Mexico_City') window.__officeDateFormats++;
+            return original.apply(this,args);
+          };
+        }""")
+        self.alta(page)
+        page.get_by_role("button", name="Agregar documento", exact=True).click()
+        expect(page.get_by_role("region", name="Último documento guardado")).to_be_visible()
+        self.assertEqual(page.evaluate("window.__officeDateFormats"), 0, "Capturing and saving must not format every report row")
+        self.open_report(page)
+        expect(page.locator(".report-table tbody tr")).to_have_count(2)
+        self.assertGreater(page.evaluate("window.__officeDateFormats"), 0)
 
     def boletas(self, page):
         page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Boletas", exact=True).click()

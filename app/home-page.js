@@ -9,6 +9,7 @@ import { createDocumentCreationClient } from "@/lib/document-creation.mjs";
 import { findCatalogRecord, indexReportMovements } from "@/lib/office-lookups.mjs";
 import { buildQrPrintHtml, createQrImageCache, preloadQrLibrary } from "@/lib/qr-labels.mjs";
 import { authErrorMessage, createSessionRecovery, withAuthDeadline } from "@/lib/auth-recovery.mjs";
+import { formatOfficeDateTime, matchesReportDateRange, officeDateKey, reportDateRangeError } from "@/lib/office-dates.mjs";
 
 const supabase = createClient();
 const DEFAULT_DOCUMENT_TYPES = [
@@ -344,6 +345,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const scanInFlight = useRef(false);
   const reportRefreshVersion = useRef(0);
   const documentSaveBlocked = busy || processingScan || Boolean(pendingSave) || pendingCreation;
+  const reportRangeError = reportDateRangeError(reportStart, reportEnd);
 
   useEffect(() => {
     if (activeView === "escanear" && !documentSaveBlocked) scanInputRef.current?.focus();
@@ -1203,6 +1205,10 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }
 
   function exportReportToExcel() {
+    if (reportRangeError) {
+      setMessage({ type: "error", text: reportRangeError });
+      return;
+    }
     const headers = ["Último movimiento", "Días en estatus", "Expediente", "Auxiliar", "Documento", "Folio forma", "Municipio", "No. de Exp. Catastral", "Abogado", "Dependencia", "Estatus actual", "Número de boleta", "Quién recibe", "Firma"];
     const safeCsvCell = (value) => {
       let text = String(value ?? "");
@@ -1210,7 +1216,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
       return `"${text.replaceAll('"', '""')}"`;
     };
     const rows = filteredReportDocuments.map((movement) => [
-      new Date(movement.occurred_at).toLocaleString("es-MX"),
+      movement.date_label,
       elapsedDays(movement.occurred_at, currentTime),
       movement.documents?.case_files?.number,
       movement.documents?.auxiliaries?.name || "",
@@ -1229,30 +1235,40 @@ export default function HomePage({ initialView = "panel" } = {}) {
     const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `reporte-rastreadoc-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `reporte-rastreadoc-${officeDateKey(Date.now())}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   }
 
   function openPrintableReport(autoPrint) {
+    if (reportRangeError) {
+      setMessage({ type: "error", text: reportRangeError });
+      return;
+    }
     const popup = window.open("", "_blank", "width=1100,height=750");
     if (!popup) return;
-    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(new Date(movement.occurred_at).toLocaleString("es-MX"))}</td><td>${elapsedDays(movement.occurred_at, currentTime)}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents?.auxiliaries?.name || "—")}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(deedColumn(movement.documents, "folio_forma") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "municipality") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "cadastral_file_number") || "—")}</td><td>${escapeHtml(movement.documents?.lawyers?.name || "—")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td><td class="signature-line"></td><td class="signature-line"></td></tr>`).join("");
+    const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(movement.date_label)}</td><td>${elapsedDays(movement.occurred_at, currentTime)}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents?.auxiliaries?.name || "—")}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(deedColumn(movement.documents, "folio_forma") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "municipality") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "cadastral_file_number") || "—")}</td><td>${escapeHtml(movement.documents?.lawyers?.name || "—")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td><td class="signature-line"></td><td class="signature-line"></td></tr>`).join("");
     const alertLabel = reportAlert === "SENT_OVERDUE" ? "Enviados vencidos" : reportAlert === "REJECTED_OVERDUE" ? "Rechazados vencidos" : "";
     const filters = [alertLabel && `Seguimiento: ${alertLabel}`, reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`, reportLawyer && `Abogado: ${lawyers.find(({ id }) => id === reportLawyer)?.name}`, reportAuxiliary && `Auxiliar: ${auxiliaries.find(({ id }) => id === reportAuxiliary)?.name}`].filter(Boolean).join(" · ") || "Todos los movimientos";
-    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>@page{size:landscape;margin:8mm}body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:9px}th,td{padding:7px 5px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}.signature-line{min-width:75px;border-bottom:1px solid #17232d}@media print{.toolbar{display:none}body{margin:8mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Auxiliar</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th><th>Quién recibe</th><th>Firma</th></tr></thead><tbody>${rows || '<tr><td colspan="14">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
+    popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>@page{size:landscape;margin:8mm}body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:9px}th,td{padding:7px 5px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}.signature-line{min-width:75px;border-bottom:1px solid #17232d}@media print{.toolbar{display:none}body{margin:8mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><p>Fechas y horas de la Ciudad de México.</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Auxiliar</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th><th>Quién recibe</th><th>Firma</th></tr></thead><tbody>${rows || '<tr><td colspan="14">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
     popup.document.close();
   }
 
   const reportIndexes = useMemo(() => indexReportMovements(reportMovements), [reportMovements]);
+  const documentDates = useMemo(() => activeView === "reportes" ? new Map(documents.map((document) => [document.id, {
+    day: officeDateKey(document.last_movement_at),
+    label: formatOfficeDateTime(document.last_movement_at),
+  }])) : null, [documents, activeView]);
   // Keep every active document, including those without a receipt, and use its
   // current server status/time rather than a historical movement's snapshot.
-  const latestReportDocuments = useMemo(() => documents.map((document) => ({
+  const latestReportDocuments = useMemo(() => documentDates ? documents.map((document) => ({
     id: document.id,
     occurred_at: document.last_movement_at,
+    date_key: documentDates.get(document.id).day,
+    date_label: documentDates.get(document.id).label,
     receipt_number: reportIndexes.latest.get(document.id)?.receipt_number ?? null,
     documents: document,
-  })), [documents, reportIndexes]);
+  })) : [], [documents, reportIndexes, documentDates]);
 
   if (!isSupabaseConfigured) {
     return <main className="center-shell"><section className="panel"><h1>Falta configurar Supabase</h1><p>Agrega en Vercel las variables NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY para este ambiente y vuelve a desplegar.</p></section></main>;
@@ -1310,10 +1326,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
   // de movimientos alcanzaba el límite de filas de Supabase.
   const matchingReportDocuments = latestReportDocuments.filter((movement) => {
     if (!movement.documents || movement.documents.archived_at) return false;
-    const movementDate = movement.occurred_at.slice(0, 10);
     const caseNumber = movement.documents?.case_files?.number ?? "";
-    return (!reportStart || movementDate >= reportStart)
-      && (!reportEnd || movementDate <= reportEnd)
+    return matchesReportDateRange(movement.date_key, reportStart, reportEnd)
       && (!reportStatus || movement.documents.status === reportStatus)
       && (!reportType || movement.documents?.document_types?.name === reportType)
       && (!reportLawyer || movement.documents?.lawyer_id === reportLawyer)
@@ -1499,7 +1513,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
               <div><span>Documento</span><strong>{formatDocumentName(scannedDocument)}</strong></div>
               <div><span>Dependencia</span><strong>{scannedDocument.agencies.name}</strong></div>
               <div><span>Estatus actual</span><strong className="status-pill">{formatStatus(scannedDocument.status)}</strong></div>
-              <div><span>Último movimiento</span><strong>{new Date(scannedDocument.last_movement_at).toLocaleString("es-MX")}</strong></div>
+              <div><span>Último movimiento</span><strong>{formatOfficeDateTime(scannedDocument.last_movement_at)}</strong></div>
               {isOutsideOffice(scannedDocument.status) && <div><span>Tiempo fuera</span><strong>{formatTimeOutside(scannedDocument.last_movement_at, currentTime)}</strong></div>}
             </div>
             {!scanMode && <div className="movement-fields">
@@ -1543,8 +1557,10 @@ export default function HomePage({ initialView = "panel" } = {}) {
         )}
       </section>}
       {activeView === "reportes" && <section className="reports-section">
-        <div className="reports-heading"><div><p className="eyebrow">DOCUMENTOS ACTUALES</p><h2>Reporte por fecha y tipo de documento</h2></div><strong>{filteredReportDocuments.length} documentos</strong></div>
-        <div className="report-actions"><button onClick={() => openPrintableReport(true)}>Imprimir</button><button className="secondary" onClick={exportReportToExcel}>Exportar a Excel</button><button className="secondary" onClick={() => openPrintableReport(false)}>Ver PDF</button></div>
+        <div className="reports-heading"><div><p className="eyebrow">DOCUMENTOS ACTUALES</p><h2>Reporte por fecha y tipo de documento</h2></div><strong>{reportRangeError ? "Revisa las fechas" : `${filteredReportDocuments.length} documentos`}</strong></div>
+        <p className="report-timezone">Fechas y horas de la Ciudad de México.</p>
+        <div className="report-actions"><button onClick={() => openPrintableReport(true)} disabled={Boolean(reportRangeError)}>Imprimir</button><button className="secondary" onClick={exportReportToExcel} disabled={Boolean(reportRangeError)}>Exportar a Excel</button><button className="secondary" onClick={() => openPrintableReport(false)} disabled={Boolean(reportRangeError)}>Ver PDF</button></div>
+        {reportRangeError && <p role="alert" className="notice error">{reportRangeError}</p>}
         <div className="report-filters">
           <label>Seguimiento<select value={reportAlert} onChange={(event) => setReportAlert(event.target.value)}><option value="">Todos los documentos</option><option value="SENT_OVERDUE">Enviados vencidos</option><option value="REJECTED_OVERDUE">Rechazados vencidos</option></select></label>
           <label>Expediente<input list="report-case-files" value={reportCase} onChange={(event) => setReportCase(event.target.value)} placeholder="Escribe parte del número" /></label>
@@ -1558,8 +1574,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
           <label>Ordenar por días<select value={reportDaySort} onChange={(event) => setReportDaySort(event.target.value)}><option value="">Orden original</option><option value="desc">Más días primero</option><option value="asc">Menos días primero</option></select></label>
         </div>
         <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Auxiliar</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th></tr></thead><tbody>
-          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{new Date(movement.occurred_at).toLocaleString("es-MX")}</td><td><strong>{elapsedDays(movement.occurred_at, currentTime)}</strong></td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents?.auxiliaries?.name || "—"}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{deedColumn(movement.documents, "folio_forma") || "—"}</td><td>{deedColumn(movement.documents, "municipality") || "—"}</td><td>{deedColumn(movement.documents, "cadastral_file_number") || "—"}</td><td>{movement.documents?.lawyers?.name || "—"}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
-          {filteredReportDocuments.length === 0 && <tr><td colSpan="12">No hay documentos que coincidan con estos filtros.</td></tr>}
+          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{movement.date_label}</td><td><strong>{elapsedDays(movement.occurred_at, currentTime)}</strong></td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents?.auxiliaries?.name || "—"}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{deedColumn(movement.documents, "folio_forma") || "—"}</td><td>{deedColumn(movement.documents, "municipality") || "—"}</td><td>{deedColumn(movement.documents, "cadastral_file_number") || "—"}</td><td>{movement.documents?.lawyers?.name || "—"}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
+          {filteredReportDocuments.length === 0 && <tr><td colSpan="12">{reportRangeError ? "Revisa el rango de fechas." : "No hay documentos que coincidan con estos filtros."}</td></tr>}
         </tbody></table></div>
       </section>}
 
@@ -1625,7 +1641,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
       {activeView === "archivados" && <section className="archived-section">
         <div className="archived-heading"><div><p className="eyebrow">DOCUMENTOS OCULTOS</p><h2>Archivados</h2><p>Estos documentos no aparecen en la operación diaria, pero conservan todo su historial.</p></div><strong>{archivedDocuments.length} archivados</strong></div>
         {archivedDocuments.length === 0 ? <p className="empty-state">No hay documentos archivados.</p> : <div className="documents-list">
-          {archivedDocuments.map((document) => <article className="document-row archived-row" key={document.id}><div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span><span>Archivado: {new Date(document.archived_at).toLocaleString("es-MX")}</span></div><div className="row-actions"><button onClick={() => restoreDocument(document)} disabled={busy}>Restaurar</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button></div></article>)}
+          {archivedDocuments.map((document) => <article className="document-row archived-row" key={document.id}><div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span><span>Archivado: {formatOfficeDateTime(document.archived_at)}</span></div><div className="row-actions"><button onClick={() => restoreDocument(document)} disabled={busy}>Restaurar</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}>Historial</button></div></article>)}
         </div>}
       </section>}
       {casePreview && (
@@ -1658,7 +1674,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
                   </div>
                   <div className="case-document-date">
                     <span>Último movimiento</span>
-                    <strong>{new Date(document.last_movement_at).toLocaleString("es-MX")}</strong>
+                    <strong>{formatOfficeDateTime(document.last_movement_at)}</strong>
                     {isOutsideOffice(document.status) && <small className="time-outside">Fuera: {formatTimeOutside(document.last_movement_at, currentTime)}</small>}
                   </div>
                   <div className="case-document-actions">{canOperate && document.status === "RECHAZADO" && <button onClick={() => { setCasePreview(null); markRejectedDocumentReady(document); }}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => { setCasePreview(null); prepareSend(document); }}>Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => { setCasePreview(null); prepareCorrection(document); }}>Editar</button>}<button className="secondary" onClick={() => { setCasePreview(null); showHistory(document); }}>Historial</button><button className="secondary" onClick={() => { setCasePreview(null); showQr(document); }}>QR</button></div>
@@ -1690,7 +1706,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
             <p className="history-document-name">{formatDocumentName(historyPreview.document)} · {historyPreview.document.agencies.name}</p>
             <ol className="timeline">
               {historyPreview.movements.map((movement) => (
-                <li key={movement.id}><span>{new Date(movement.occurred_at).toLocaleString("es-MX")}</span><strong>{formatStatus(movement.status)}</strong>{movement.receipt_number && <p><b>Boleta:</b> {movement.receipt_number}</p>}{movement.rejection_reason && <p><b>Motivo:</b> {movement.rejection_reason}</p>}{movement.notes && <p><b>Observaciones:</b> {movement.notes}</p>}</li>
+                <li key={movement.id}><span>{formatOfficeDateTime(movement.occurred_at)}</span><strong>{formatStatus(movement.status)}</strong>{movement.receipt_number && <p><b>Boleta:</b> {movement.receipt_number}</p>}{movement.rejection_reason && <p><b>Motivo:</b> {movement.rejection_reason}</p>}{movement.notes && <p><b>Observaciones:</b> {movement.notes}</p>}</li>
               ))}
             </ol>
           </section>

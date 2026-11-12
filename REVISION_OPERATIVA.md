@@ -22,6 +22,11 @@
   20f3b3898b7e4feea55e4b0574827bd5b5b236e6; se comprobaron HTTP 200, los ocho
   scripts públicos, sus señales nuevas y el backend real. El usuario confirmó
   después la recarga y consulta de un expediente e historial en producción.
+- La mejora de mensajes de acceso y recuperación de sesión se publicó después
+  en 5b2261bc2c64fdef69744ef99ac56031f11452f5. Se comprobaron HTTP 200, los ocho
+  scripts públicos, sus señales nuevas y el backend real. El usuario confirmó
+  después el acceso y consulta en producción. La cuarta entrega, de fechas de
+  reportes, está preparada para validación en Preview.
 - Se comprobó en sus archivos públicos que la app incorpora 8192 para el indicador
   de almacenamiento y la dirección del proyecto Supabase esperado. Ese indicador
   es una referencia del plan, no una medición del espacio libre físico del disco.
@@ -56,8 +61,8 @@
   etiqueta/estado/fecha directamente. Archivado y restauración conservan su flujo.
 
 No se modificaron perfiles ni políticas de roles existentes. La eliminación
-permanente, la sincronización automática entre computadoras, la paginación y la
-revisión de fechas de reportes quedan para otras etapas.
+permanente, la sincronización automática entre computadoras y la paginación
+quedan para otras etapas. Las fechas de reportes se corrigen en la cuarta entrega.
 
 ## Segunda entrega: alta y QR, validada en Preview
 
@@ -136,8 +141,34 @@ incorrecta y que Ingresar vuelve a habilitarse. Después confirmó acceso con la
 contraseña correcta, sesión conservada tras Ctrl+F5 y consulta de PRUEBA-001.
 Estas pruebas manuales corresponden al código cf8f24c.
 
-Esta entrega no cambia roles, claves, variables o esquema de Supabase. Su
-publicación en producción queda pendiente de la instrucción del usuario.
+Esta entrega no cambia roles, claves, variables o esquema de Supabase. Después
+de validar Preview, el usuario autorizó publicarla. Se publicó en main como
+5b2261b y se verificaron sus archivos públicos y el backend de producción.
+El usuario confirmó después el acceso y consulta normales.
+
+## Cuarta entrega: fechas y horas de la oficina
+
+El filtro de reportes tomaba el día UTC del último movimiento, aunque la oficina
+usa el horario de la Ciudad de México. Por ejemplo, un movimiento a las 23:30
+del 11 de noviembre podía aparecer al filtrar el 12. Esta entrega usa
+America/Mexico_City para el día del filtro y para las fechas mostradas:
+
+- Pantalla, Excel e impresión/PDF comparten el mismo día y hora. El nombre del
+  archivo exportado también usa el día de la oficina. Expediente, historial,
+  escáner y archivados muestran esa misma zona, con horario de 24 horas.
+- Desde y Hasta incluyen el día completo. Se conservan los filtros abiertos y
+  los documentos sin boleta. El reporte sigue mostrando el estado actual de
+  cada documento y la fecha de su último movimiento.
+- Un rango invertido muestra «La fecha Desde no puede ser posterior a Hasta.»
+  y bloquea las tres salidas del reporte hasta corregirlo.
+- Las fechas del reporte se calculan al abrir Reportes y se reutilizan al
+  filtrar. Dar de alta y escribir en el formulario no formatean todo el catálogo.
+- No se cambian los timestamps guardados, su precisión, las comparaciones de
+  concurrencia ni los cálculos de tiempo transcurrido. No hay SQL, cambios de
+  claves, variables, roles ni dependencias.
+
+La validación manual del usuario en Preview y la publicación en producción de
+esta cuarta entrega están pendientes. No requiere migraciones de Supabase.
 
 ## Validación reproducible
 
@@ -172,9 +203,14 @@ Esa ruta temporal puede no existir en una máquina futura.
 Para alta y QR se aprobaron 25 pruebas JavaScript, 34 de PostgreSQL y 13 de
 navegador, además de compilación y lint. Para mensajes de acceso se aprobaron
 37 pruebas JavaScript y 20 de navegador, incluidos los flujos anteriores de
-alta, movimientos y QR. Las pruebas de PostgreSQL no se repitieron porque esta
-entrega no modifica SQL; se conserva su resultado anterior. Lint sin errores,
-con la advertencia existente sobre la imagen del QR.
+alta, movimientos y QR. Para fechas de reportes se aprobaron 45 pruebas
+JavaScript y 25 de navegador. Incluyen medianoche, cambio de mes/año y horario
+histórico, computadoras en UTC y Los Ángeles, filtros inclusivos y abiertos,
+rango invertido, coincidencia entre pantalla/CSV/impresión e historial, y alta
+sin formatear las fechas de todo el catálogo. La compilación es correcta.
+Las pruebas de PostgreSQL no se repitieron en estas dos entregas porque no
+modifican SQL; se conserva su resultado anterior. Lint sin errores, con la
+advertencia existente sobre la imagen del QR.
 
 ## Proyecto Supabase de pruebas
 
@@ -253,9 +289,6 @@ no recurre a guardados separados si la función no está disponible.
 - Verificar si el segundo sistema usa Supabase Storage. Los archivos de Storage
   necesitan respaldo aparte de la base de datos.
 - Preparar una copia externa y su proceso de comprobación.
-- Los mensajes y límites de espera de getSession/signIn están corregidos en la
-  tercera entrega, validada en Preview y pendiente de publicación coordinada.
-  No se establecieron como causa de la antigua incidencia de acceso a Preview.
 
 ## Proyectos
 
@@ -263,6 +296,6 @@ no recurre a guardados separados si la función no está disponible.
 - Vercel: https://vercel.com/jasg/rastreodoc
 - Supabase: https://supabase.com/dashboard/project/vmmafjnhtluinmmjyigv
 
-Las dos primeras entregas están publicadas en main hasta 20f3b38. La tercera se
-desarrolla en codex/mensajes-acceso y se valida usando codex/rastreadoc-pruebas,
+Las tres primeras entregas están publicadas en main hasta 5b2261b. La cuarta se
+desarrolla en codex/fechas-reportes y se valida usando codex/rastreadoc-pruebas,
 que conserva los overrides del proyecto Free. No necesita ejecutar migraciones.

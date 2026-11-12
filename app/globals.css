@@ -175,6 +175,7 @@ button:disabled { opacity:.65; cursor:wait; }
 .report-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
 .report-filters { display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:12px; margin:20px 0; }
 .report-filters label { margin:0; }
+.report-timezone { color:var(--muted); font-size:13px; margin:8px 0 16px; }
 .report-table-wrap { overflow:auto; }
 .report-table { width:100%; border-collapse:collapse; font-size:14px; }
 .report-table th,.report-table td { padding:13px 12px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
