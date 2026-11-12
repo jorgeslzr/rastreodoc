@@ -578,6 +578,15 @@ class DatabaseOperations(unittest.TestCase):
         creator = self.run_sql(f"select created_by from public.movements where document_id={literal(original['id'])};")
         self.assertEqual(creator, ACTOR)
 
+    def test_retrying_a_document_primary_key_cannot_create_a_second_initial_movement(self):
+        original = self.new_document()
+        self.run_sql(f"""
+          insert into public.documents(id,case_file_id,document_type_id,agency_id,label)
+          values ({literal(original['id'])}, '{CASE_FILE}', '{CERTIFICATE}', '{AGENCY}', 'Original');
+        """, actor=ACTOR, error="23505")
+        self.assertEqual(self.movement_count(original["id"]), 1)
+        self.assertEqual(self.document(original["id"]), original)
+
     def test_legacy_insert_is_rejected_even_with_forged_context(self):
         original = self.new_document()
         sql = f"""

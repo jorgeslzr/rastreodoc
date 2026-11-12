@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import SectionErrorBoundary from "./section-error-boundary";
 import { refreshAfterSave, scanLookupMessage } from "@/lib/operation-feedback.mjs";
 import { createDocumentOperationClient, documentOperationArguments } from "@/lib/document-operations.mjs";
+import { createDocumentCreationClient } from "@/lib/document-creation.mjs";
+import { findCatalogRecord, indexReportMovements } from "@/lib/office-lookups.mjs";
+import { buildQrPrintHtml, createQrImageCache, preloadQrLibrary } from "@/lib/qr-labels.mjs";
 
 const supabase = createClient();
 const DEFAULT_DOCUMENT_TYPES = [
@@ -215,10 +217,6 @@ function overdueCategory(document, currentTime) {
   return "";
 }
 
-function buildQrPayload(token) {
-  return `RDOC:${token}`;
-}
-
 function isObsoleteAgencyName(name) {
   const upperName = name.trim().toLocaleUpperCase("es-MX");
   return upperName.startsWith("RESISTO PUBLICO")
@@ -248,8 +246,9 @@ function normalizeScannedToken(value) {
 }
 
 export default function HomePage({ initialView = "panel" } = {}) {
-  const router = useRouter();
   const [session, setSession] = useState(null);
+  const sessionUserId = session?.user?.id;
+  const sessionEmail = session?.user?.email;
   const [loadingSession, setLoadingSession] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -275,6 +274,12 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const [documents, setDocuments] = useState([]);
   const [archivedDocuments, setArchivedDocuments] = useState([]);
   const [qrPreview, setQrPreview] = useState(null);
+  const [qrTask, setQrTask] = useState(null);
+  const qrWorkInFlight = useRef(false);
+  const lastLabelWindow = useRef(null);
+  const [qrImages] = useState(() => createQrImageCache());
+  const [recentCreation, setRecentCreation] = useState(null);
+  const lastCreatedDocument = recentCreation && recentCreation.userId === sessionUserId ? recentCreation.document : null;
   const [selectedQrIds, setSelectedQrIds] = useState([]);
   const [scanToken, setScanToken] = useState("");
   const [scannedDocument, setScannedDocument] = useState(null);
@@ -319,25 +324,53 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const [storageError, setStorageError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pendingSave, setPendingSave] = useState(null);
+  const [pendingCreation, setPendingCreation] = useState(false);
+  const creationInFlight = useRef(false);
   const [processingScan, setProcessingScan] = useState(false);
   const [operationClient] = useState(() => createDocumentOperationClient(
     (args) => supabase.rpc("save_document_operation", args).abortSignal(AbortSignal.timeout(20000)),
   ));
+  const [creationClient] = useState(() => createDocumentCreationClient({
+    insert: (input) => supabase.from("documents").insert(input).select(DOCUMENT_SELECT)
+      .single().abortSignal(AbortSignal.timeout(20000)),
+    find: (id) => supabase.from("documents").select(DOCUMENT_SELECT).eq("id", id)
+      .maybeSingle().abortSignal(AbortSignal.timeout(20000)),
+  }));
   const scanInFlight = useRef(false);
   const reportRefreshVersion = useRef(0);
-  const documentSaveBlocked = busy || processingScan || Boolean(pendingSave);
+  const documentSaveBlocked = busy || processingScan || Boolean(pendingSave) || pendingCreation;
 
   useEffect(() => {
     if (activeView === "escanear" && !documentSaveBlocked) scanInputRef.current?.focus();
   }, [activeView, documentSaveBlocked]);
 
+  useEffect(() => {
+    if (!pendingCreation && !pendingSave) return;
+    const preserveVerification = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preserveVerification);
+    return () => window.removeEventListener("beforeunload", preserveVerification);
+  }, [pendingCreation, pendingSave]);
+
   function openView(view) {
-    if (view === "alta" && window.location.pathname !== "/alta") {
-      router.push("/alta");
-      return;
-    }
     setActiveView(view);
   }
+
+  useEffect(() => {
+    if (!sessionUserId) return;
+    const warm = () => {
+      preloadQrLibrary().then(() => lastCreatedDocument
+        ? qrImages.get(lastCreatedDocument.qr_token) : undefined).catch(() => {});
+    };
+    if (window.requestIdleCallback) {
+      const task = window.requestIdleCallback(warm, { timeout: 1500 });
+      return () => window.cancelIdleCallback(task);
+    }
+    const task = window.setTimeout(warm, 0);
+    return () => window.clearTimeout(task);
+  }, [sessionUserId, lastCreatedDocument, qrImages]);
 
   useEffect(() => {
     if (!isSupabaseConfigured) return undefined;
@@ -360,7 +393,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }, []);
 
   useEffect(() => {
-    if (!session) return;
+    if (!sessionUserId) return;
+    let active = true;
 
     Promise.all([
       fetchCaseFiles(),
@@ -374,6 +408,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
       fetchDocuments(true),
       fetchReportMovements(),
     ]).then(([caseResult, typeResult, agencyResult, lawyerResult, auxiliaryResult, municipalityResult, profileResult, documentResult, archivedResult, movementResult]) => {
+      if (!active) return;
       setCaseFiles(caseResult.data ?? []);
       setDocumentTypes(typeResult.data ?? []);
       setAgencies(agencyResult.data ?? []);
@@ -390,17 +425,20 @@ export default function HomePage({ initialView = "panel" } = {}) {
       setAuxiliaries(loadedAuxiliaries);
       setMunicipalities(municipalityResult.data ?? []);
       setProfiles(profileResult.data ?? []);
-      const sessionProfile = profileResult.data?.find((profile) => profile.id === session.user.id);
+      const sessionProfile = profileResult.data?.find((profile) => profile.id === sessionUserId);
       setCurrentRole(sessionProfile?.role ?? "admin");
-      setCurrentUsername(sessionProfile?.username ?? session.user.email?.split("@")[0] ?? "usuario");
+      setCurrentUsername(sessionProfile?.username ?? sessionEmail?.split("@")[0] ?? "usuario");
       setDocuments((documentResult.data ?? []).map(attachCatalogs));
       setArchivedDocuments((archivedResult.data ?? []).map(attachCatalogs));
       setReportMovements(movementResult.data ?? []);
       const loadError = [caseResult, typeResult, agencyResult, lawyerResult, auxiliaryResult, municipalityResult, profileResult, documentResult, archivedResult, movementResult].find((result) => result.error)?.error;
       if (loadError) setMessage({ type: "error", text: "No fue posible cargar toda la información. Recarga la página; si continúa, revisa que las migraciones estén aplicadas." });
       if (sessionProfile?.role === "admin") refreshStorageUsage();
+    }).catch(() => {
+      if (active) setMessage({ type: "error", text: "No fue posible cargar la información. Revisa tu conexión y recarga la página." });
     });
-  }, [session]);
+    return () => { active = false; };
+  }, [sessionUserId, sessionEmail]);
 
   async function refreshReportAfterSave(successText) {
     const version = ++reportRefreshVersion.current;
@@ -566,13 +604,17 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function findOrCreate(table, name) {
     const cleanName = name.trim();
-    const existing = await supabase.from(table).select("id, name").eq("name", cleanName).maybeSingle();
+    const existing = await supabase.from(table).select("id, name").eq("name", cleanName).maybeSingle()
+      .abortSignal(AbortSignal.timeout(20000));
+    if (existing.error) return null;
     if (existing.data) return existing.data;
 
-    const created = await supabase.from(table).insert({ name: cleanName }).select("id, name").single();
+    const created = await supabase.from(table).insert({ name: cleanName }).select("id, name").single()
+      .abortSignal(AbortSignal.timeout(20000));
     if (created.data) return created.data;
 
-    const repeated = await supabase.from(table).select("id, name").eq("name", cleanName).single();
+    const repeated = await supabase.from(table).select("id, name").eq("name", cleanName).single()
+      .abortSignal(AbortSignal.timeout(20000));
     return repeated.data;
   }
 
@@ -642,6 +684,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function createDocument(event) {
     event.preventDefault();
+    if (creationInFlight.current || creationClient.hasPending()
+      || operationClient.isInFlight() || operationClient.hasPending()) return;
     const selectedCase = caseFiles.find((caseFile) => caseFile.number.toLocaleLowerCase("es-MX") === caseSearch.trim().toLocaleLowerCase("es-MX"));
     if (!selectedCase) {
       setMessage({ type: "error", text: "Selecciona un expediente existente de la búsqueda." });
@@ -649,64 +693,112 @@ export default function HomePage({ initialView = "panel" } = {}) {
     }
     if (!documentType.trim() || !agency.trim() || !lawyerId || !auxiliaryId) return;
 
+    creationInFlight.current = true;
     setBusy(true);
     reportRefreshVersion.current += 1;
     setMessage(null);
-    const [typeRecord, agencyRecord] = await Promise.all([
-      findOrCreate("document_types", documentType),
-      findOrCreate("agencies", agency),
-    ]);
-
-    if (!typeRecord || !agencyRecord) {
+    try {
+      // Catalogs are already loaded. Only query/create an entry when absent.
+      const [typeRecord, agencyRecord] = await Promise.all([
+        findCatalogRecord(documentTypes, documentType) || findOrCreate("document_types", documentType),
+        findCatalogRecord(agencies, agency) || findOrCreate("agencies", agency),
+      ]);
+      if (!typeRecord || !agencyRecord) {
+        setMessage({ type: "error", text: "No fue posible preparar el tipo o la dependencia. Revisa tu conexión y los datos de captura." });
+        return;
+      }
+      setDocumentTypes((current) => current.some(({ id }) => id === typeRecord.id) ? current : [...current, typeRecord]);
+      setAgencies((current) => current.some(({ id }) => id === agencyRecord.id) ? current : [...current, agencyRecord]);
+      const cleanDeedEntries = isDeedType(documentType) ? deedEntries.map((entry) => ({
+        folio_forma: entry.folio_forma.trim(),
+        municipality: entry.municipality.trim(),
+        cadastral_file_number: entry.cadastral_file_number.trim(),
+      })) : [];
+      const firstDeedEntry = cleanDeedEntries[0];
+      const result = await creationClient.save({
+        case_file_id: selectedCase.id,
+        document_type_id: typeRecord.id,
+        agency_id: agencyRecord.id,
+        lawyer_id: lawyerId,
+        auxiliary_id: auxiliaryId,
+        label: documentLabel.trim() || null,
+        folio_forma: firstDeedEntry?.folio_forma || null,
+        municipality: firstDeedEntry?.municipality || null,
+        cadastral_file_number: firstDeedEntry?.cadastral_file_number || null,
+        deed_entries: cleanDeedEntries,
+        status: "EN_OFICINA",
+      });
+      finishDocumentCreation(result);
+    } catch {
+      setMessage({ type: "error", text: "No fue posible preparar el alta. Revisa tu conexión y los datos de captura." });
+    } finally {
+      creationInFlight.current = false;
       setBusy(false);
-      setMessage({ type: "error", text: "No fue posible preparar el tipo o la dependencia." });
+    }
+  }
+
+  function finishDocumentCreation(result) {
+    if (result.kind === "uncertain") {
+      setPendingCreation(true);
+      setMessage({ type: "error", text: "No se pudo confirmar el alta. El documento podría haberse guardado. Usa Verificar alta antes de recargar o capturarlo de nuevo." });
       return;
     }
-
-    const cleanDeedEntries = isDeedType(documentType) ? deedEntries.map((entry) => ({
-      folio_forma: entry.folio_forma.trim(),
-      municipality: entry.municipality.trim(),
-      cadastral_file_number: entry.cadastral_file_number.trim(),
-    })) : [];
-    const firstDeedEntry = cleanDeedEntries[0];
-    const { data, error } = await supabase.from("documents").insert({
-      case_file_id: selectedCase.id,
-      document_type_id: typeRecord.id,
-      agency_id: agencyRecord.id,
-      lawyer_id: lawyerId,
-      auxiliary_id: auxiliaryId,
-      label: documentLabel.trim() || null,
-      folio_forma: firstDeedEntry?.folio_forma || null,
-      municipality: firstDeedEntry?.municipality || null,
-      cadastral_file_number: firstDeedEntry?.cadastral_file_number || null,
-      deed_entries: cleanDeedEntries,
-      status: "EN_OFICINA",
-    }).select(DOCUMENT_SELECT).single();
-    setBusy(false);
-
-    if (error) {
-      setMessage({ type: "error", text: "No fue posible guardar el documento." });
+    if (result.kind === "failed") {
+      setPendingCreation(false);
+      setMessage({ type: "error", text: "El alta no se guardó. Revisa el expediente y los catálogos; conserva los datos de captura para volver a intentar." });
       return;
     }
-
-    setDocumentTypes((current) => current.some(({ id }) => id === typeRecord.id) ? current : [...current, typeRecord]);
-    setAgencies((current) => current.some(({ id }) => id === agencyRecord.id) ? current : [...current, agencyRecord]);
-    const selectedLawyer = lawyers.find((lawyer) => lawyer.id === lawyerId) ?? null;
-    const selectedAuxiliary = auxiliaries.find((auxiliaryRecord) => auxiliaryRecord.id === auxiliaryId) ?? null;
-    setDocuments((current) => [{ ...data, lawyers: selectedLawyer, auxiliaries: selectedAuxiliary }, ...current]);
+    if (result.kind !== "saved") return;
+    setPendingCreation(false);
+    const data = result.data;
+    const created = {
+      ...data,
+      lawyers: lawyers.find((lawyer) => lawyer.id === data.lawyer_id) ?? null,
+      auxiliaries: auxiliaries.find((auxiliary) => auxiliary.id === data.auxiliary_id) ?? null,
+    };
+    setDocuments((current) => created.archived_at ? current.filter((item) => item.id !== created.id)
+      : current.some((item) => item.id === created.id)
+        ? current.map((item) => item.id === created.id ? created : item) : [created, ...current]);
+    setArchivedDocuments((current) => !created.archived_at ? current.filter((item) => item.id !== created.id)
+      : current.some((item) => item.id === created.id)
+        ? current.map((item) => item.id === created.id ? created : item) : [created, ...current]);
+    setRecentCreation({ userId: sessionUserId, document: created });
     setDocumentType("");
     setDocumentLabel("");
     setDeedEntries([emptyDeedEntry()]);
     setAgency("");
     setLawyerId("");
     setAuxiliaryId("");
-    await refreshReportAfterSave("Documento agregado con estatus LISTO PARA ENVIAR.");
+    // A new document's initial movement has no receipt. The report already
+    // derives its rows from documents, so no history download is needed here.
+    setMessage({ type: "success", text: `Documento guardado. Estatus actual: ${formatStatus(created.status)}. ${created.archived_at ? "Puedes consultarlo en Archivados." : "Su QR está disponible para imprimir."}` });
+  }
+
+  async function verifyDocumentCreation() {
+    if (creationInFlight.current || !creationClient.hasPending()) return;
+    creationInFlight.current = true;
+    setBusy(true);
+    try { finishDocumentCreation(await creationClient.verify()); }
+    finally {
+      creationInFlight.current = false;
+      setBusy(false);
+    }
   }
 
   async function showQr(document) {
-    const QRCode = (await import("qrcode")).default;
-    const dataUrl = await QRCode.toDataURL(buildQrPayload(document.qr_token), { width: 420, margin: 1, errorCorrectionLevel: "H" });
-    setQrPreview({ document, dataUrl });
+    if (qrWorkInFlight.current) return;
+    qrWorkInFlight.current = true;
+    setQrTask({ done: 0, total: 1 });
+    setQrPreview({ document, dataUrl: null, error: false });
+    try {
+      const dataUrl = await qrImages.get(document.qr_token);
+      setQrPreview((current) => current?.document.id === document.id ? { document, dataUrl, error: false } : current);
+    } catch {
+      setQrPreview((current) => current?.document.id === document.id ? { ...current, error: true } : current);
+    } finally {
+      qrWorkInFlight.current = false;
+      setQrTask(null);
+    }
   }
 
   function buildLabelHtml(document, dataUrl) {
@@ -717,32 +809,71 @@ export default function HomePage({ initialView = "panel" } = {}) {
     return `@page{size:40mm 30mm;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:Arial,sans-serif;color:#111}.label{width:40mm;height:30mm;display:grid;grid-template-columns:20mm 1fr;gap:1.2mm;align-items:center;padding:1.5mm;overflow:hidden;break-after:page;page-break-after:always}.label:last-child{break-after:auto;page-break-after:auto}.qr{width:20mm;height:20mm}.info{height:20mm;min-width:0;display:flex;align-items:center;justify-content:center;gap:1.2mm;overflow:hidden}.case,.document-type{max-height:20mm;writing-mode:vertical-rl;text-orientation:mixed;overflow:hidden}.case{font-size:8pt;font-weight:800;line-height:1.1;white-space:nowrap}.document-type{font-size:6pt;font-weight:600;line-height:1.15;overflow-wrap:anywhere}@media screen{body{display:grid;place-items:center;gap:8px;min-height:100vh;background:#eee}.label{background:white;border:1px solid #ddd;transform:scale(2.5);transform-origin:center;margin:26mm}}@media print{button{display:none}}`;
   }
 
-  function printQr() {
-    const popup = window.open("", "_blank", "width=520,height=680");
-    if (!popup || !qrPreview) return;
+  function openLabelWindow(key) {
+    const previous = lastLabelWindow.current;
+    if (previous?.key === key && !previous.popup.closed) {
+      previous.popup.focus();
+      return null;
+    }
+    const popup = window.open("", "_blank", "width=900,height=700");
+    if (!popup) {
+      const text = "El navegador bloqueó la ventana de impresión. Permite las ventanas emergentes para este sitio y vuelve a intentar.";
+      setMessage({ type: "error", text });
+      setQrPreview((current) => current ? { ...current, printError: text } : current);
+      return null;
+    }
+    lastLabelWindow.current = { key, popup };
+    popup.document.write('<!doctype html><html lang="es"><head><title>Preparando etiquetas RASTREADOC</title></head><body><p>Preparando etiquetas…</p></body></html>');
+    popup.document.close();
+    return popup;
+  }
 
+  function printQr() {
+    if (!qrPreview?.dataUrl || qrWorkInFlight.current) return;
     const { document, dataUrl } = qrPreview;
-    popup.document.write(`<!doctype html><html><head><title>QR ${escapeHtml(document.case_files.number)}</title><style>${labelPrintStyles()}</style></head><body>${buildLabelHtml(document, dataUrl)}<script>window.onload=()=>window.print()</script></body></html>`);
+    const popup = openLabelWindow(document.id);
+    if (!popup) return;
+    popup.document.write(buildQrPrintHtml({ title: `QR ${document.case_files.number}`, labels: [buildLabelHtml(document, dataUrl)], styles: labelPrintStyles() }));
     popup.document.close();
   }
 
   async function printSelectedQrLabels() {
-    const selectedDocuments = documents.filter((document) => selectedQrIds.includes(document.id) && document.status === "EN_OFICINA");
+    if (qrWorkInFlight.current) return;
+    const selectedIds = new Set(selectedQrIds);
+    const selectedDocuments = documents.filter((document) => selectedIds.has(document.id) && document.status === "EN_OFICINA");
     if (selectedDocuments.length === 0) {
       setMessage({ type: "error", text: "Selecciona al menos un documento listo para enviar." });
       return;
     }
 
-    const QRCode = (await import("qrcode")).default;
-    const labels = await Promise.all(selectedDocuments.map(async (document) => {
-      const dataUrl = await QRCode.toDataURL(buildQrPayload(document.qr_token), { width: 420, margin: 1, errorCorrectionLevel: "H" });
-      return buildLabelHtml(document, dataUrl);
-    }));
-
-    const popup = window.open("", "_blank", "width=900,height=700");
+    // Open inside the click event, before awaiting image generation, so popup
+    // blockers do not discard a fully prepared batch of labels.
+    const popup = openLabelWindow(selectedDocuments.map(({ id }) => id).join(","));
     if (!popup) return;
-    popup.document.write(`<!doctype html><html><head><title>Etiquetas RASTREADOC</title><style>${labelPrintStyles()}</style></head><body>${labels.join("")}<script>window.onload=()=>window.print()</script></body></html>`);
-    popup.document.close();
+    qrWorkInFlight.current = true;
+    setQrTask({ done: 0, total: selectedDocuments.length });
+    try {
+      const labels = [];
+      for (const document of selectedDocuments) {
+        if (popup.closed) return;
+        const dataUrl = await qrImages.get(document.qr_token);
+        labels.push(buildLabelHtml(document, dataUrl));
+        if (labels.length % 8 === 0 || labels.length === selectedDocuments.length) {
+          setQrTask({ done: labels.length, total: selectedDocuments.length });
+          // Yield between small batches while keeping the original label order.
+          await new Promise((resolve) => window.setTimeout(resolve, 0));
+        }
+      }
+      if (popup.closed) return;
+      popup.document.write(buildQrPrintHtml({ title: "Etiquetas RASTREADOC", labels, styles: labelPrintStyles() }));
+      popup.document.close();
+    } catch {
+      if (!popup.closed) popup.close();
+      setMessage({ type: "error", text: "No fue posible preparar todos los QR. Vuelve a intentar la impresión de las etiquetas seleccionadas." });
+    } finally {
+      qrWorkInFlight.current = false;
+      setQrTask(null);
+    }
   }
 
   function toggleQrSelection(documentId) {
@@ -770,7 +901,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }
 
   async function persistDocumentChange(document, changes, retry = false) {
-    if (operationClient.isInFlight()) return null;
+    if (operationClient.isInFlight() || creationInFlight.current || creationClient.hasPending()) return null;
     setBusy(true);
     reportRefreshVersion.current += 1;
     setMessage(null);
@@ -830,7 +961,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function scanDocument(event) {
     event.preventDefault();
-    if (scanInFlight.current || operationClient.isInFlight() || operationClient.hasPending()) return;
+    if (scanInFlight.current || operationClient.isInFlight() || operationClient.hasPending()
+      || creationInFlight.current || creationClient.hasPending()) return;
     const token = normalizeScannedToken(scanToken);
     if (!token) return;
     scanInFlight.current = true;
@@ -1086,6 +1218,16 @@ export default function HomePage({ initialView = "panel" } = {}) {
     popup.document.close();
   }
 
+  const reportIndexes = useMemo(() => indexReportMovements(reportMovements), [reportMovements]);
+  // Keep every active document, including those without a receipt, and use its
+  // current server status/time rather than a historical movement's snapshot.
+  const latestReportDocuments = useMemo(() => documents.map((document) => ({
+    id: document.id,
+    occurred_at: document.last_movement_at,
+    receipt_number: reportIndexes.latest.get(document.id)?.receipt_number ?? null,
+    documents: document,
+  })), [documents, reportIndexes]);
+
   if (!isSupabaseConfigured) {
     return <main className="center-shell"><section className="panel"><h1>Falta configurar Supabase</h1><p>Agrega en Vercel las variables NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY para este ambiente y vuelve a desplegar.</p></section></main>;
   }
@@ -1139,15 +1281,6 @@ export default function HomePage({ initialView = "panel" } = {}) {
   // El reporte y el panel deben partir de la misma lista de documentos actuales.
   // Usar el historial como fuente hacía que faltaran documentos cuando la consulta
   // de movimientos alcanzaba el límite de filas de Supabase.
-  const latestReportDocuments = documents.map((document) => {
-    const latestMovement = reportMovements.find((movement) => movement.documents?.id === document.id);
-    return {
-      id: document.id,
-      occurred_at: document.last_movement_at,
-      receipt_number: latestMovement?.receipt_number ?? null,
-      documents: document,
-    };
-  });
   const matchingReportDocuments = latestReportDocuments.filter((movement) => {
     if (!movement.documents || movement.documents.archived_at) return false;
     const movementDate = movement.occurred_at.slice(0, 10);
@@ -1170,7 +1303,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     .filter(([, , count]) => count > 0);
   const normalizedReceiptCaseSearch = receiptCaseSearch.trim().toLocaleLowerCase("es-MX");
   const receiptDocuments = documents.filter((document) => document.status === "EN_OFICINA" && (!normalizedReceiptCaseSearch || document.case_files.number.toLocaleLowerCase("es-MX").includes(normalizedReceiptCaseSearch)));
-  const latestReceiptFor = (documentId) => reportMovements.find((movement) => movement.documents?.id === documentId && movement.receipt_number)?.receipt_number;
+  const latestReceiptFor = (documentId) => reportIndexes.receipts.get(documentId);
   const storagePercentage = storageUsage === null ? 0 : Math.min(100, (storageUsage / DATABASE_STORAGE_LIMIT_BYTES) * 100);
   const storageStatus = storageLevel(storagePercentage);
   const viewTitles = {
@@ -1256,12 +1389,13 @@ export default function HomePage({ initialView = "panel" } = {}) {
           <h2>Nuevo expediente</h2>
           <p>Escribe el número exactamente como aparece en tu otro programa.</p>
         </div>
-        <label>Número de expediente<input value={number} onChange={(event) => setNumber(event.target.value)} placeholder="Ejemplo: 2548/2026" autoFocus required /></label>
-        <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Guardar expediente"}</button>
+        <label>Número de expediente<input value={number} onChange={(event) => setNumber(event.target.value)} placeholder="Ejemplo: 2548/2026" autoFocus required disabled={documentSaveBlocked} /></label>
+        <button type="submit" disabled={documentSaveBlocked}>{busy ? "Guardando…" : "Guardar expediente"}</button>
       </form>
       <SectionErrorBoundary render={() => (
       <form className="panel case-panel" onSubmit={createDocument}>
         <div><h2>Agregar documento</h2><p>Elige el expediente y captura los datos. Puedes agregar varias veces el mismo tipo de documento.</p></div>
+        <fieldset className="document-fields" disabled={documentSaveBlocked}>
         <label>Buscar expediente<input list="case-files" value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Escribe parte del número" required /></label>
         <datalist id="case-files">{caseFiles.map((caseFile) => <option key={caseFile.id} value={caseFile.number} />)}</datalist>
         <label>Tipo de documento<select value={documentType} onChange={(event) => changeDocumentType(event.target.value)} required><option value="">Seleccionar tipo</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
@@ -1284,12 +1418,19 @@ export default function HomePage({ initialView = "panel" } = {}) {
         {documentType === "OTROS" ? <label>Dependencia manual<input list="agency-options" value={agency} onChange={(event) => setAgency(event.target.value)} placeholder="Escribe o selecciona dependencia" required /></label> : <label>Dependencia automática<select value={agency} onChange={(event) => setAgency(event.target.value)} required disabled={Boolean(DOCUMENT_AGENCY_MAP[documentType.toLocaleUpperCase("es-MX")])}><option value="">Seleccionar dependencia</option>{availableAgencies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>}
         <datalist id="agency-options">{availableAgencies.map((name) => <option key={name} value={name} />)}</datalist>
         <button type="submit" disabled={busy}>{busy ? "Guardando…" : "Agregar documento"}</button>
+        </fieldset>
       </form>
       )} />
       </div>
+      {lastCreatedDocument && !lastCreatedDocument.archived_at && <section className="panel recent-qr" aria-label="Último documento guardado">
+        <div><p className="eyebrow">DOCUMENTO GUARDADO</p><strong>{lastCreatedDocument.case_files.number} · {formatDocumentName(lastCreatedDocument)}</strong><p>Puedes abrir e imprimir su QR desde aquí.</p></div>
+        <button onClick={() => showQr(lastCreatedDocument)} disabled={Boolean(qrTask)}>Ver e imprimir QR</button>
+      </section>}
       </>}
       {message && <div role="status" aria-live="polite" className={`notice page-notice ${message.type}`}>{message.text}</div>}
       {pendingSave && <div className="page-notice"><button className="secondary" onClick={verifyPendingSave} disabled={busy}>{busy ? "Verificando…" : "Verificar guardado"}</button></div>}
+      {pendingCreation && <div className="page-notice"><button className="secondary" onClick={verifyDocumentCreation} disabled={busy}>{busy ? "Verificando…" : "Verificar alta"}</button></div>}
+      {qrTask && <p className="page-notice" aria-live="polite">Preparando QR: {qrTask.done} de {qrTask.total}.</p>}
 
       {activeView === "boletas" && <section className="receipt-section standalone">
         <div className="receipt-heading">
@@ -1350,7 +1491,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
         )}
       </section>}
       {activeView === "consulta" && <section className="documents-section standalone">
-        <div className="documents-heading"><div><p className="eyebrow">CONSULTA</p><h2>Todos los documentos</h2></div><button className="secondary" onClick={printSelectedQrLabels}>Imprimir QR seleccionados ({selectedQrIds.length})</button></div>
+        <div className="documents-heading"><div><p className="eyebrow">CONSULTA</p><h2>Todos los documentos</h2></div><button className="secondary" onClick={printSelectedQrLabels} disabled={Boolean(qrTask)}>Imprimir QR seleccionados ({selectedQrIds.length})</button></div>
         <div className="document-filters">
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar expediente, documento o dependencia" aria-label="Buscar documentos" />
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filtrar por estatus">
@@ -1507,8 +1648,9 @@ export default function HomePage({ initialView = "panel" } = {}) {
             <p className="eyebrow">CÓDIGO QR</p>
             <h2>Expediente {qrPreview.document.case_files.number}</h2>
             <p>{formatDocumentName(qrPreview.document)} · {qrPreview.document.agencies.name}</p><small>Formato de impresión: etiqueta 40 × 30 mm</small>
-            <img src={qrPreview.dataUrl} alt={`QR del expediente ${qrPreview.document.case_files.number}`} />
-            <button onClick={printQr}>Imprimir etiqueta 40 × 30 mm</button>
+            {qrPreview.dataUrl ? <img src={qrPreview.dataUrl} alt={`QR del expediente ${qrPreview.document.case_files.number}`} /> : qrPreview.error ? <><p role="alert">No fue posible generar el QR. El documento sigue guardado.</p><button onClick={() => showQr(qrPreview.document)}>Volver a generar QR</button></> : <p aria-live="polite">Preparando QR…</p>}
+            {qrPreview.printError && <p role="alert">{qrPreview.printError}</p>}
+            <button onClick={printQr} disabled={!qrPreview.dataUrl || Boolean(qrTask)}>Imprimir etiqueta 40 × 30 mm</button>
           </section>
         </div>
       )}

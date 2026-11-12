@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Local browser checks with a fully intercepted, fictional Supabase API.
 
-Requires Python Playwright and Chromium. Run from the repository root:
+Requires Python Playwright, pypdf and Chromium. Run from the repository root:
     python tests/document-operations-browser.py
 
 The script starts its own Next development server with fake public settings,
@@ -12,19 +12,23 @@ stops only the process group that it created. It never uses a real database.
 import base64
 import copy
 import http.client
+from io import BytesIO
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
+from pypdf import PdfReader
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +51,13 @@ class SupabaseFixture:
         self.origin = origin
         self.scenario = scenario
         self.operations = []
+        self.reads = []
+        self.creations = []
+        self.created_documents = {}
+        self.creation_movements = 0
+        self.catalog_writes = []
+        self.dialog_types = []
+        self.extra_documents = []
         self.direct_writes = []
         self.unexpected_hosts = []
         self.receipts = {}
@@ -131,14 +142,44 @@ class SupabaseFixture:
             return
         if parsed.path.startswith("/rest/v1/"):
             table = parsed.path.split("/")[-1]
+            if table in {"document_types", "agencies"} and request.method == "POST" and self.scenario.startswith("creation"):
+                data = copy.deepcopy(request.post_data_json)
+                self.catalog_writes.append({"table": table, "data": data})
+                row = {"id": f"cccccccc-cccc-4ccc-8ccc-{len(self.catalog_writes):012d}", **data}
+                self.rows[table].append(row)
+                self.fulfill(route, row, 201)
+                return
+            if table == "documents" and request.method == "POST" and self.scenario.startswith("creation"):
+                data = copy.deepcopy(request.post_data_json)
+                self.creations.append(data)
+                if self.scenario == "creation_before_commit" and len(self.creations) == 1:
+                    route.abort("connectionfailed")
+                    return
+                if data["id"] in self.created_documents:
+                    self.fulfill(route, {"code": "23505", "message": "Fictional primary key conflict"}, 409)
+                    return
+                created = {**copy.deepcopy(self.document), **data, "qr_token": "99999999-9999-4999-8999-999999999999"}
+                created["document_types"] = {"name": next(item["name"] for item in self.rows["document_types"] if item["id"] == data["document_type_id"])}
+                created["agencies"] = {"name": next(item["name"] for item in self.rows["agencies"] if item["id"] == data["agency_id"])}
+                self.created_documents[data["id"]] = created
+                self.creation_movements += 1
+                if self.scenario == "creation_lost_reply" and len(self.creations) == 1:
+                    route.abort("connectionfailed")
+                    return
+                self.fulfill(route, created, 201)
+                return
             if request.method != "GET":
                 self.direct_writes.append({"table": table, "method": request.method})
                 self.fulfill(route, {"code": "PT422", "message": "Unexpected direct table write in browser test"}, 422)
                 return
             query = parse_qs(parsed.query)
+            self.reads.append({"table": table, "query": query})
             if table == "documents":
                 archived = query.get("archived_at", [""])[0]
-                rows = [] if archived == "not.is.null" else [copy.deepcopy(self.document)]
+                rows = [] if archived == "not.is.null" else copy.deepcopy([self.document, *self.extra_documents, *self.created_documents.values()])
+                if "id" in query:
+                    document_id = query["id"][0].removeprefix("eq.")
+                    rows = [row for row in rows if row["id"] == document_id]
                 if self.scenario == "delayed_scan" and "qr_token" in query:
                     self.held_lookup = (route, rows)
                     return
@@ -146,6 +187,9 @@ class SupabaseFixture:
                 rows = copy.deepcopy(self.movements)
             else:
                 rows = copy.deepcopy(self.rows.get(table, []))
+                if "name" in query:
+                    name = query["name"][0].removeprefix("eq.").casefold()
+                    rows = [row for row in rows if row["name"].casefold() == name]
             if "application/vnd.pgrst.object+json" in request.headers.get("accept", ""):
                 self.fulfill(route, rows[0] if rows else None)
             else:
@@ -204,15 +248,21 @@ class BrowserOperations(unittest.TestCase):
     base_url = None
     browser = None
 
-    def open_app(self, scenario):
+    def open_app(self, scenario, configure=None):
         context = self.browser.new_context()
         self.addCleanup(context.close)
         fixture = SupabaseFixture(self.base_url, scenario)
+        if configure:
+            configure(fixture)
         context.route("**/*", fixture.route)
         page = context.new_page()
+        page.set_default_timeout(10000)
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
-        page.on("dialog", lambda dialog: dialog.accept())
+        def handle_dialog(dialog):
+            fixture.dialog_types.append(dialog.type)
+            dialog.dismiss() if dialog.type == "beforeunload" else dialog.accept()
+        page.on("dialog", handle_dialog)
         page.goto(self.base_url, wait_until="domcontentloaded")
         page.get_by_label("Usuario o correo").fill("prueba")
         page.get_by_label("Contraseña", exact=True).fill("fictional-test-password")
@@ -228,6 +278,155 @@ class BrowserOperations(unittest.TestCase):
         page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Boletas", exact=True).click()
         expect(page.get_by_text("TEST-001 · CERTIFICADO — Original", exact=True)).to_be_visible()
         page.get_by_label("Número de boleta", exact=True).fill("B-TEST-123")
+
+    def alta(self, page):
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Alta", exact=True).click()
+        page.get_by_label("Buscar expediente", exact=True).fill("TEST-001")
+        page.get_by_label("Tipo de documento").select_option("CERTIFICADO")
+        page.get_by_label("Abogado").select_option(LAWYER_ID)
+        page.get_by_label("Auxiliar").select_option(AUXILIARY_ID)
+        page.get_by_label("Identificador para distinguirlo (opcional)").fill("Nuevo de prueba")
+
+    def spy_print(self, page, broken_image=False):
+        page.context.add_init_script("""
+window.__printCalls=[];
+window.print=()=>window.__printCalls.push({
+  labels:document.querySelectorAll('.label').length,
+  allDecoded:Array.from(document.images).every(image=>image.complete && image.naturalWidth===420)
+});
+""" + ("HTMLImageElement.prototype.decode=()=>Promise.reject(new Error('Fictional image decode failure'));" if broken_image else ""))
+
+    def assert_label_pdf(self, popup, count, path):
+        pdf = PdfReader(BytesIO(popup.pdf(path=path, prefer_css_page_size=True)))
+        self.assertEqual(len(pdf.pages), count, "Print exactly one page per selected label")
+        for page in pdf.pages:
+            self.assertAlmostEqual(float(page.mediabox.width) * 25.4 / 72, 40, delta=0.5)
+            self.assertAlmostEqual(float(page.mediabox.height) * 25.4 / 72, 30, delta=0.5)
+
+    def test_creation_has_one_insert_without_catalog_or_report_reload_and_prints_saved_qr(self):
+        page, fixture = self.open_app("creation_normal")
+        initial_reads = len(fixture.reads)
+        self.alta(page)
+        self.assertEqual(len(fixture.reads), initial_reads, "Opening Alta should reuse the loaded workspace")
+        page.get_by_role("button", name="Agregar documento", exact=True).evaluate("button=>{button.click();button.click();}")
+        saved = page.get_by_role("region", name="Último documento guardado")
+        expect(saved).to_contain_text("TEST-001 · CERTIFICADO — Nuevo de prueba")
+        self.assertEqual(len(fixture.creations), 1)
+        self.assertEqual(fixture.creation_movements, 1)
+        self.assertEqual(len(fixture.reads), initial_reads, "A known-catalog capture should only insert the document")
+        saved.get_by_role("button", name="Ver e imprimir QR").click()
+        dialog = page.get_by_role("dialog", name="Código QR del documento", exact=True)
+        image = dialog.get_by_role("img")
+        expect(image).to_have_attribute("src", re.compile(r"^data:image/png;base64,"))
+        page.wait_for_function("()=>document.querySelector('.qr-modal img')?.naturalWidth===420")
+        self.spy_print(page)
+        with page.expect_popup() as opened:
+            dialog.get_by_role("button", name="Imprimir etiqueta 40 × 30 mm").click()
+        popup = opened.value
+        popup.wait_for_function("()=>window.__printCalls?.length===1")
+        self.assertEqual(popup.evaluate("window.__printCalls"), [{"labels": 1, "allDecoded": True}])
+        self.assertEqual(popup.locator(".case").inner_text(), "TEST-001")
+        self.assertEqual(popup.locator(".document-type").inner_text(), "CERTIFICADO")
+        self.assertEqual(popup.locator("img").get_attribute("src"), image.get_attribute("src"))
+        popup.locator(".label").screenshot(path="/tmp/rastreodoc-etiqueta-40x30-prueba.png")
+        self.assert_label_pdf(popup, 1, "/tmp/rastreodoc-etiqueta-prueba.pdf")
+        dialog.get_by_role("button", name="Imprimir etiqueta 40 × 30 mm").evaluate("button=>{button.click();button.click();}")
+        self.assertEqual(len(page.context.pages), 2, "A repeated print click should focus the existing label window")
+
+    def test_creation_lost_reply_verifies_one_document_without_a_second_insert(self):
+        page, fixture = self.open_app("creation_lost_reply")
+        self.alta(page)
+        page.get_by_role("button", name="Agregar documento", exact=True).click()
+        verify = page.get_by_role("button", name="Verificar alta", exact=True)
+        expect(verify).to_be_visible()
+        expect(page.get_by_label("Buscar expediente", exact=True)).to_be_disabled()
+        expect(page.get_by_role("status")).to_contain_text("El documento podría haberse guardado")
+        self.assertEqual(len(fixture.created_documents), 1)
+        page.evaluate("()=>window.location.reload()")
+        deadline = time.monotonic() + 5
+        while "beforeunload" not in fixture.dialog_types and time.monotonic() < deadline:
+            page.wait_for_timeout(20)
+        self.assertIn("beforeunload", fixture.dialog_types)
+        expect(verify).to_be_visible()
+        verify.evaluate("button=>{button.click();button.click();}")
+        expect(verify).not_to_be_visible()
+        expect(page.get_by_role("region", name="Último documento guardado")).to_contain_text("Nuevo de prueba")
+        self.assertEqual(len(fixture.creations), 1)
+        self.assertEqual(fixture.creation_movements, 1)
+
+    def test_creation_still_creates_missing_manual_catalog_entries(self):
+        page, fixture = self.open_app("creation_new_catalog")
+        self.alta(page)
+        page.get_by_label("Tipo de documento").select_option("OTROS")
+        page.get_by_label("Dependencia manual").fill("OFICINA FICTICIA")
+        page.get_by_role("button", name="Agregar documento", exact=True).click()
+        expect(page.get_by_role("region", name="Último documento guardado")).to_contain_text("TEST-001 · OTROS — Nuevo de prueba")
+        self.assertEqual({item["table"] for item in fixture.catalog_writes}, {"document_types", "agencies"})
+        self.assertEqual(len(fixture.creations), 1)
+        self.assertEqual(fixture.creation_movements, 1)
+
+    def test_creation_before_commit_retries_the_same_id_and_creates_one_initial_movement(self):
+        page, fixture = self.open_app("creation_before_commit")
+        self.alta(page)
+        page.get_by_role("button", name="Agregar documento", exact=True).click()
+        verify = page.get_by_role("button", name="Verificar alta", exact=True)
+        expect(verify).to_be_visible()
+        self.assertEqual(fixture.created_documents, {})
+        verify.click()
+        expect(verify).not_to_be_visible()
+        expect(page.get_by_role("region", name="Último documento guardado")).to_contain_text("Nuevo de prueba")
+        self.assertEqual(len(fixture.creations), 2)
+        self.assertEqual(fixture.creations[0], fixture.creations[1])
+        self.assertEqual(len(fixture.created_documents), 1)
+        self.assertEqual(fixture.creation_movements, 1)
+
+    def test_batch_print_includes_every_selected_ready_document_in_order_after_decode(self):
+        def documents(fixture):
+            for number, status in [(2, "EN_OFICINA"), (3, "EN_OFICINA"), (4, "AUTORIZADO")]:
+                item = copy.deepcopy(fixture.document)
+                item.update(id=f"aaaaaaaa-aaaa-4aaa-8aaa-{number:012d}", qr_token=f"bbbbbbbb-bbbb-4bbb-8bbb-{number:012d}", status=status)
+                item["case_files"] = {"number": f"TEST-{number:03d}"}
+                fixture.extra_documents.append(item)
+        page, fixture = self.open_app("normal", configure=documents)
+        self.spy_print(page)
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Buscar", exact=True).click()
+        for checkbox in page.locator(".qr-select input").all():
+            checkbox.check()
+        with page.expect_popup() as opened:
+            page.get_by_role("button", name="Imprimir QR seleccionados (3)", exact=True).click()
+        popup = opened.value
+        popup.wait_for_function("()=>window.__printCalls?.length===1")
+        self.assertEqual(popup.locator(".case").all_inner_texts(), ["TEST-001", "TEST-002", "TEST-003"])
+        self.assertEqual(popup.evaluate("window.__printCalls"), [{"labels": 3, "allDecoded": True}])
+        self.assert_label_pdf(popup, 3, "/tmp/rastreodoc-lote-etiquetas-prueba.pdf")
+        self.assertEqual(fixture.operations, [])
+
+    def test_blocked_popup_shows_an_actionable_message_and_can_be_retried(self):
+        page, _ = self.open_app("normal")
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Buscar", exact=True).click()
+        page.locator(".qr-select input").check()
+        page.evaluate("()=>{window.__originalOpen=window.open;window.open=()=>null;}")
+        print_button = page.get_by_role("button", name="Imprimir QR seleccionados (1)", exact=True)
+        print_button.click()
+        expect(page.get_by_role("status")).to_contain_text("Permite las ventanas emergentes")
+        expect(print_button).to_be_enabled()
+        page.evaluate("()=>{window.open=window.__originalOpen;}")
+        self.spy_print(page)
+        with page.expect_popup() as opened:
+            print_button.click()
+        opened.value.wait_for_function("()=>window.__printCalls?.length===1")
+
+    def test_failed_image_does_not_print_an_incomplete_batch(self):
+        page, _ = self.open_app("normal")
+        self.spy_print(page, broken_image=True)
+        page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Buscar", exact=True).click()
+        page.locator(".qr-select input").check()
+        with page.expect_popup() as opened:
+            page.get_by_role("button", name="Imprimir QR seleccionados (1)", exact=True).click()
+        popup = opened.value
+        expect(popup.get_by_role("alert")).to_contain_text("No se pudieron cargar todos los QR")
+        self.assertEqual(popup.evaluate("window.__printCalls"), [])
+        expect(popup.get_by_role("button", name="Preparando impresión…", exact=True)).to_be_disabled()
 
     def test_receipt_double_submission_uses_one_atomic_request(self):
         page, fixture = self.open_app("normal")
@@ -390,6 +589,8 @@ def main():
                 connection.close()
                 if response.status == 200:
                     break
+                if response.status >= 500:
+                    raise RuntimeError(f"Local page returned HTTP {response.status} during readiness.")
             except (OSError, TimeoutError):
                 pass
             time.sleep(0.2)
@@ -405,6 +606,10 @@ def main():
                 return 0 if result.wasSuccessful() else 1
             finally:
                 browser.close()
+    except Exception:
+        log.seek(0)
+        sys.stderr.write(log.read()[-8000:])
+        raise
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)

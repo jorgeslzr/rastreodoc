@@ -72,6 +72,10 @@ button:disabled { opacity:.65; cursor:wait; }
 .workspace-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; align-items:start; }
 .case-panel { width:100%; }
 .case-panel label { margin-top:26px; }
+.document-fields { border:0; padding:0; margin:0; min-width:0; }
+.recent-qr { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-top:20px; }
+.recent-qr p:not(.eyebrow) { color:var(--muted); margin-bottom:0; }
+@media (max-width:700px) { .recent-qr { align-items:stretch; flex-direction:column; } }
 .case-panel input { min-height:56px; font-size:18px; }
 .page-notice { max-width:660px; margin-top:20px; }
 .scanner-section { margin-top:48px; padding:26px; border-radius:16px; background:var(--navy); color:white; }

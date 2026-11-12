@@ -1,17 +1,24 @@
 # Revisión operativa de RASTREADOC
 
-## Estado de la oficina y configuración
+## Estado al 12 de noviembre de 2026
 
-- El usuario confirmó Pro y respaldos disponibles en ambos proyectos. La captura
-  de RASTREADOC muestra siete copias diarias; todavía no se probó una restauración.
+- El usuario confirmó Pro y respaldos disponibles en ambos proyectos. El 12 de
+  noviembre se restauró un respaldo real en un proyecto temporal independiente.
+  Se pudieron consultar 1071 expedientes, 1786 documentos y 4795 movimientos;
+  el usuario confirmó un expediente conocido, su tipo, estatus e historial, y la
+  presencia de la función de guardado y sus dos protecciones. El usuario confirmó
+  después la eliminación de la copia temporal para detener sus cargos.
 - RASTREADOC pasó de Nano a Micro sin incremento en el precio de cómputo mostrado.
   El usuario confirmó que pudo consultar un expediente después del reinicio.
 - El disco mostrado usa 0.27 GB de 2 GB asignados y anuncia expansión automática
   a 8 GB. No se aumentó manualmente el disco.
 - Vercel usa Node 24.x según la pantalla revisada. El repositorio declara Next.js
   y `npm run build` en vercel.json; se indicó alinear el selector del panel.
-- El despliegue revisado es Production/Current/Ready, rama main, commit
-  4924d852470a971880645946c7cabe7063a2773b (merge de PR 70).
+- La primera entrega se publicó en main el 11 de noviembre, commit
+  e9f7e590c87a603c75bc8ebe149fb842ae789b3c, después de instalar la migración de
+  guardado atómico con la oficina sin uso. El usuario confirmó acceso, consulta
+  de un expediente real e historial. Al iniciar esta segunda entrega, main
+  continúa en ese commit.
 - Se comprobó en sus archivos públicos que la app incorpora 8192 para el indicador
   de almacenamiento y la dirección del proyecto Supabase esperado. Ese indicador
   es una referencia del plan, no una medición del espacio libre físico del disco.
@@ -24,7 +31,7 @@
   No se han inspeccionado los valores privados ni conectado credenciales de
   administración al entorno.
 
-## Cambios publicados solo en la rama y el Preview de pruebas
+## Protecciones publicadas en producción el 11 de noviembre
 
 - Mensaje de boleta consistente con el estado confirmado por servidor.
 - Error de consulta QR diferenciado de documento ausente.
@@ -46,8 +53,44 @@
   etiqueta/estado/fecha directamente. Archivado y restauración conservan su flujo.
 
 No se modificaron perfiles ni políticas de roles existentes. La eliminación
-permanente, la sincronización automática entre computadoras, las mejoras de
-paginación/rapidez y la revisión de fechas de reportes quedan para otras etapas.
+permanente, la sincronización automática entre computadoras, la paginación y la
+revisión de fechas de reportes quedan para otras etapas.
+
+## Segunda entrega: alta y QR, para validar en Preview
+
+El usuario identificó lentitud al dar de alta documentos y al generar/imprimir
+QR. Esta entrega se enfoca en esos pasos y no necesita migraciones ni cambios
+de infraestructura:
+
+- Abrir Alta dentro de la aplicación conserva los datos ya cargados. El acceso
+  directo a /alta sigue disponible. Renovar el token de la misma cuenta tampoco
+  vuelve a cargar toda la información.
+- Un alta con tipo y dependencia ya cargados usa sus IDs locales y hace solamente
+  la escritura del documento; elimina las dos consultas de catálogo y la recarga
+  del historial de reportes que antes se hacían por documento.
+- El documento nuevo lleva un UUID de cliente. Se bloquea el doble clic y, ante
+  una respuesta incierta, Verificar alta consulta/reutiliza el mismo UUID y los
+  mismos datos. El PK existente impide otro documento o movimiento inicial.
+  La verificación pendiente se conserva en la pestaña; antes de recargar/cerrar
+  el navegador avisa. No se promete persistencia si se ignora ese aviso.
+- El formulario conserva la captura mientras el resultado sea incierto. Solo
+  muestra el documento guardado y habilita su QR después de confirmarlo.
+- El alta ofrece Ver e imprimir QR junto al último documento guardado, evitando
+  una búsqueda adicional.
+- La biblioteca QR se precarga en tiempo ocioso. La caché de imágenes reutiliza
+  generaciones en curso y conserva como máximo 64 entradas en memoria.
+- La ventana de impresión por lote se abre desde el clic y muestra preparación.
+  Se mantienen el orden de las etiquetas y los QR RDOC originales, de 420 px,
+  margen 1 y corrección H, con papel de 40 × 30 mm.
+- Se espera a decodificar todas las imágenes antes de imprimir. Una imagen que
+  falla produce un mensaje y no dispara la impresión de un lote incompleto.
+  Un bloqueo de ventanas emergentes recibe instrucciones visibles de reintento.
+- Los cruces de documentos con boletas se indexan una vez y se memoizan; ya no
+  se busca en todo el historial por cada documento y cada tecla de captura.
+
+Pendiente de esta entrega: validación en el Preview de la rama configurada y
+con la impresora/lector reales del usuario antes de publicar en main. La prueba
+de PDF verifica geometría y páginas; no mide el tiempo físico de la impresora.
 
 ## Validación reproducible
 
@@ -66,19 +109,21 @@ socket privado, con usuarios y registros ficticios. Inicializan un esquema de
 prueba, aplican solamente la migración nueva y prueban también su repetición.
 Nunca toman una URL de Supabase ni reutilizan una base existente.
 
-Las pruebas de navegador crean un servidor Next local con dirección y clave
-ficticias, interceptan su API y bloquean destinos externos. Comprueban doble clic,
-respuesta perdida, verificación con sesión expirada, corrección con conflicto y
-bloqueo del escáner. La integración real también se comprobó manualmente con el usuario en
-Supabase Free y el Preview; los resultados están registrados abajo.
+Las pruebas de navegador requieren Playwright para Python, pypdf y Chromium.
+Crean un servidor Next local con dirección y clave ficticias, interceptan su API
+y bloquean destinos externos. Comprueban guardados, respuestas perdidas,
+correcciones, bloqueo del escáner, alta sin consultas extra, catálogo manual,
+impresión individual/lote y bloqueo/fallo de imágenes. Los PDF generados verifican
+una página de 40 × 30 mm por etiqueta seleccionada. La integración real de la
+primera entrega también se comprobó con el usuario en Supabase Free y Preview.
 
 En esta máquina el PostgreSQL aislado se obtuvo con índices Debian firmados y
 paquetes verificados por APT, extraídos sin instalar nada en el sistema:
 `/tmp/rastreodoc-pg-packages/root/usr/lib/postgresql/17/bin`.
 Esa ruta temporal puede no existir en una máquina futura.
 
-Resultados locales de esta entrega: 12 pruebas JavaScript, 33 de PostgreSQL y
-6 de navegador aprobadas. Compilación correcta y lint sin errores, con una
+Resultados locales de esta entrega: 25 pruebas JavaScript, 34 de PostgreSQL y
+13 de navegador aprobadas. Compilación correcta y lint sin errores, con una
 advertencia existente sobre la imagen del QR.
 
 ## Proyecto Supabase de pruebas
@@ -124,38 +169,24 @@ https://rastreodoc-git-codex-rastreadoc-pruebas-jasg.vercel.app/
 La incidencia de acceso se resolvió para el usuario al entrar por este alias;
 no se pudo inspeccionar la configuración del enlace inmutable que fallaba.
 
-## Revisión de estructura de producción pendiente
+## Revisión e instalación de producción realizadas el 11 de noviembre
 
-Ejecutar únicamente scripts/revision-produccion.sql en SQL Editor del proyecto
-real vmmafjnhtluinmmjyigv. Es una sola consulta de metadatos, sin DDL ni DML y sin
-leer expedientes. Fue probada dentro de una transacción READ ONLY en PostgreSQL.
+La consulta de solo lectura scripts/revision-produccion.sql devolvió las cuatro
+comprobaciones de compatibilidad en true y la función nueva ausente. El usuario
+mostró el respaldo del 11 de noviembre a las 09:34:44 UTC y confirmó que la
+oficina había dejado de usar el sistema.
 
-La salida comprueba columnas/tipos, estatus del enum y triggers de creación,
-sincronización e inmutabilidad del historial. Si hay faltantes o la actualización
-ya figura presente, revisar el resultado antes de continuar. Este chequeo no
-sustituye verificar el respaldo reciente ni autoriza instalar la migración.
-Los cambios de esta revisión son documentación, consulta y pruebas; no alteran
-el código de la app que el usuario acaba de validar.
+Se aplicó únicamente supabase/migrations/20261110_atomic_document_operations.sql,
+acompañada por recarga del esquema y tres verificaciones de metadatos. El usuario
+confirmó función y dos protecciones en true. Se publicó e9f7e59 mediante un push
+normal a main y se verificaron HTTP 200, la RPC nueva en el JS público y la URL
+del backend de producción. El usuario confirmó acceso y lectura del expediente
+e historial; se indicó Ctrl+F5 en cada equipo antes de reanudar la oficina.
 
-## Instalación coordinada pendiente
-
-1. Revisar la salida de scripts/revision-produccion.sql y confirmar que existe
-   un respaldo reciente. Las pruebas funcionales en la base Free ya se confirmaron.
-   No ejecutar todas las migraciones históricas: existe una que elimina expedientes.
-2. Revisar el diff de codex/rastreadoc-pruebas contra main y preparar la versión
-   exacta. La rama ya está en GitHub; main se confirmó sin cambios en 4924d85.
-   Aún falta autorización para actualizar producción.
-3. Con la oficina cerrada y sin escrituras pendientes, aplicar únicamente
-   `supabase/migrations/20261110_atomic_document_operations.sql`.
-4. Publicar inmediatamente la versión de la app que usa esa RPC. Entre ambos
-   pasos, los clientes anteriores recibirán un aviso de actualizar y sus
-   movimientos/correcciones serán rechazados antes de modificar datos.
-5. Recargar las pestañas de todos los equipos. Comprobar acceso, lectura de un
-   expediente y el flujo de escritura acordado antes de reabrir la operación.
-6. Si falla la publicación, quitar solamente las dos guardias nuevas usando
-   `supabase/rollback/20261110_atomic_document_operations_guards.sql` y restaurar
-   el despliegue anterior. Esto conserva el historial y las confirmaciones ya
-   guardadas; no elimina tablas ni revierte movimientos legítimos.
+No se utilizó la reversión. Se conserva el archivo
+supabase/rollback/20261110_atomic_document_operations_guards.sql para retirar solo
+las dos guardias si fuera necesario volver a la app anterior, preservando datos.
+No ejecutar todas las migraciones históricas: existe una que elimina expedientes.
 
 La migración crea funciones, dos triggers de guardia y una tabla de confirmaciones;
 no modifica los movimientos anteriores. La app nueva requiere esa migración y
@@ -163,8 +194,10 @@ no recurre a guardados separados si la función no está disponible.
 
 ## Pendientes de respaldo y continuidad
 
-- Probar una restauración en un proyecto separado, comparar conteos/relaciones y
-  consultar un expediente conocido. Tener copias listadas no demuestra recuperación.
+- La restauración de base se probó con el respaldo del 12 de noviembre a las
+  09:34:41 UTC. Los conteos y la muestra consultada no constituyen una comparación
+  exhaustiva de todos los registros. No se probó levantar la app completa con
+  Auth/Storage sobre esa copia; esos servicios requieren configuración adicional.
 - Definir cuánto trabajo puede perderse entre respaldos diarios y si hacen falta
   copias más frecuentes o PITR, con su costo adicional.
 - Verificar si el segundo sistema usa Supabase Storage. Los archivos de Storage
@@ -181,5 +214,7 @@ no recurre a guardados separados si la función no está disponible.
 - Vercel: https://vercel.com/jasg/rastreodoc
 - Supabase: https://supabase.com/dashboard/project/vmmafjnhtluinmmjyigv
 
-La rama de esta entrega es codex/rastreadoc-pruebas y está subida a GitHub.
-No se ha fusionado con main ni aplicado la migración en producción.
+La primera entrega está en producción en e9f7e59. La segunda se desarrolla en
+codex/alta-y-qr-rapidos y se valida usando codex/rastreadoc-pruebas, que conserva
+los overrides del proyecto Free. Su publicación en main queda pendiente de la
+prueba del usuario; no requiere volver a ejecutar la migración de guardados.
