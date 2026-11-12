@@ -787,10 +787,12 @@ window.print=()=>window.__printCalls.push({
                 original = copy.deepcopy(fixture.rows["case_files"])
                 number = "EX-EXTERNO" if outside_cache else "TEST-001"
                 self.case_form(page, number.lower()).click()
-                expect(page.get_by_role("status")).to_have_text(f"El expediente {number} ya existe. Se seleccionó para agregar documentos.")
+                expect(page.locator(".case-creation-column").get_by_role("status")).to_have_text(f"El expediente {number} ya existe. Se seleccionó para agregar documentos.")
                 self.assert_case_selected(page, number)
                 self.assertEqual(fixture.rows["case_files"], original)
                 self.assertEqual(len(fixture.case_creations), 1)
+                if outside_cache:
+                    page.locator(".workspace-grid").screenshot(path="/tmp/rastreodoc-aviso-expediente.png")
 
     def test_case_known_rollback_unlocks_the_form_for_a_corrected_capture(self):
         page, fixture = self.open_app("case_rollback")

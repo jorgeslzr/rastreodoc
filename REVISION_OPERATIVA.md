@@ -234,6 +234,9 @@ el número capturado y un UUID propio hasta confirmar el resultado:
 
 - Un alta normal hace una sola inserción. El expediente se incorpora una vez
   al catálogo local y se selecciona para agregar documentos sin recargar.
+- Los avisos del expediente se muestran debajo de Guardar expediente, en la
+  columna izquierda. La verificación pendiente aparece en esa misma zona;
+  al cambiar de vista conserva su aviso y acción accesibles.
 - Una solicitud en curso bloquea dobles envíos y la captura de documentos o
   lectura de QR. Si el guardado es incierto, ofrece Verificar expediente y
   conserva los campos hasta resolverlo. La verificación sigue accesible al
@@ -253,8 +256,12 @@ el número capturado y un UUID propio hasta confirmar el resultado:
   después de ignorar el aviso de cierre/recarga. No hay migraciones ni cambios
   de variables, claves, roles, infraestructura o dependencias.
 
-La validación manual del usuario en Preview y la publicación de esta sexta
-entrega están pendientes.
+El usuario confirmó en el Preview 3084270 que PRUEBA-EXP-12NOV se guarda, se
+limpia el campo superior y queda seleccionado para agregar documentos. Al
+capturarlo en minúsculas confirmó el aviso «ya existe» y la selección del mismo
+expediente. Después pidió colocar los avisos debajo de Guardar expediente;
+ese ajuste visual se incluye en la revisión siguiente. La comprobación manual
+de la ubicación nueva y la publicación de esta sexta entrega están pendientes.
 
 ## Validación reproducible
 
@@ -319,6 +326,11 @@ Se mantuvieron aprobados todos los flujos anteriores. Lint sin errores, con la
 advertencia previa de la imagen QR. Las pruebas usan datos ficticios en PostgreSQL
 local y en la API interceptada del navegador, sin escribir en Supabase. La
 compilación Next 16.4.6 es correcta con variables públicas ficticias.
+
+Después de reubicar los avisos se repitieron diez casos de navegador: los ocho
+de expedientes y los flujos de alta de documento/QR y corrección. Todos pasaron;
+se revisó además una captura del aviso debajo de la tarjeta izquierda. No se
+repitieron los tests de protocolo ni PostgreSQL, cuyos archivos no cambian.
 
 ## Proyecto Supabase de pruebas
 

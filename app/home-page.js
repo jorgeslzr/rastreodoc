@@ -635,11 +635,11 @@ export default function HomePage({ initialView = "panel" } = {}) {
   function finishCaseCreation(result) {
     setPendingCaseCreation(caseCreationClient.hasPending());
     if (result.kind === "uncertain") {
-      setMessage({ type: "error", text: "No se pudo confirmar el expediente. Podría haberse guardado. Pulsa Verificar expediente antes de volver a capturarlo o recargar." });
+      setMessage({ scope: "caseCreation", type: "error", text: "No se pudo confirmar el expediente. Podría haberse guardado. Pulsa Verificar expediente antes de volver a capturarlo o recargar." });
       return;
     }
     if (result.kind === "failed") {
-      setMessage({ type: "error", text: "No se guardó el expediente. Revisa el número y vuelve a intentar; si continúa, comunícalo al administrador de la oficina." });
+      setMessage({ scope: "caseCreation", type: "error", text: "No se guardó el expediente. Revisa el número y vuelve a intentar; si continúa, comunícalo al administrador de la oficina." });
       return;
     }
     if (!["saved", "existing"].includes(result.kind)) return;
@@ -647,7 +647,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     setNumber("");
     setCaseFiles((current) => [data, ...current.filter((item) => item.id !== data.id)]);
     setCaseSearch(data.number);
-    setMessage({ type: "success", text: result.kind === "existing"
+    setMessage({ scope: "caseCreation", type: "success", text: result.kind === "existing"
       ? `El expediente ${data.number} ya existe. Se seleccionó para agregar documentos.`
       : `Expediente ${data.number} guardado correctamente.` });
   }
@@ -1400,6 +1400,10 @@ export default function HomePage({ initialView = "panel" } = {}) {
     usuarios: ["SEGURIDAD", "Usuarios"],
     archivados: ["CONTROL", "Documentos archivados"],
   };
+  const caseFeedback = <>
+    {message?.scope === "caseCreation" && <div role="status" aria-live="polite" className={`notice ${activeView === "alta" ? "" : "page-notice"} ${message.type}`}>{message.text}</div>}
+    {pendingCaseCreation && <div className={activeView === "alta" ? "case-creation-verify" : "page-notice"}><button type="button" className="secondary" onClick={verifyCaseCreation} disabled={busy}>{busy ? "Procesando expediente…" : "Verificar expediente"}</button></div>}
+  </>;
 
   return (
     <main className="page-shell">
@@ -1467,6 +1471,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
         <span>4. Capturar boleta sin QR</span>
       </section>
       <div className="workspace-grid">
+      <div className="case-creation-column">
       <form className="panel case-panel" onSubmit={createCaseFile}>
         <div>
           <h2>Nuevo expediente</h2>
@@ -1475,6 +1480,8 @@ export default function HomePage({ initialView = "panel" } = {}) {
         <label>Número de expediente<input value={number} onChange={(event) => setNumber(event.target.value)} placeholder="Ejemplo: 2548/2026" autoFocus required disabled={documentSaveBlocked} /></label>
         <button type="submit" disabled={documentSaveBlocked}>{busy ? "Guardando…" : "Guardar expediente"}</button>
       </form>
+      {caseFeedback}
+      </div>
       <SectionErrorBoundary render={() => (
       <form className="panel case-panel" onSubmit={createDocument}>
         <div><h2>Agregar documento</h2><p>Elige el expediente y captura los datos. Puedes agregar varias veces el mismo tipo de documento.</p></div>
@@ -1510,10 +1517,10 @@ export default function HomePage({ initialView = "panel" } = {}) {
         <button onClick={() => showQr(lastCreatedDocument)} disabled={Boolean(qrTask)}>Ver e imprimir QR</button>
       </section>}
       </>}
-      {message && <div role="status" aria-live="polite" className={`notice page-notice ${message.type}`}>{message.text}</div>}
+      {message && message.scope !== "caseCreation" && <div role="status" aria-live="polite" className={`notice page-notice ${message.type}`}>{message.text}</div>}
       {pendingSave && <div className="page-notice"><button className="secondary" onClick={verifyPendingSave} disabled={busy}>{busy ? "Verificando…" : "Verificar guardado"}</button></div>}
       {pendingCreation && <div className="page-notice"><button className="secondary" onClick={verifyDocumentCreation} disabled={busy}>{busy ? "Verificando…" : "Verificar alta"}</button></div>}
-      {pendingCaseCreation && <div className="page-notice"><button className="secondary" onClick={verifyCaseCreation} disabled={busy}>{busy ? "Procesando expediente…" : "Verificar expediente"}</button></div>}
+      {activeView !== "alta" && caseFeedback}
       {qrTask && <p className="page-notice" aria-live="polite">Preparando QR: {qrTask.done} de {qrTask.total}.</p>}
 
       {activeView === "boletas" && <section className="receipt-section standalone">

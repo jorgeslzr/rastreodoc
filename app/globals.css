@@ -73,6 +73,9 @@ button:disabled { opacity:.65; cursor:wait; }
 .secondary { min-height:42px; border:1px solid var(--line); background:white; color:var(--navy); }
 .secondary:hover { background:#edf1f3; }
 .workspace-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; align-items:start; }
+.case-creation-column { display:grid; gap:14px; min-width:0; }
+.case-creation-column > .notice { margin:0; }
+.case-creation-verify button { width:100%; }
 .case-panel { width:100%; }
 .case-panel label { margin-top:26px; }
 .document-fields { border:0; padding:0; margin:0; min-width:0; }
