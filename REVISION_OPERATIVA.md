@@ -26,7 +26,7 @@
   en 5b2261bc2c64fdef69744ef99ac56031f11452f5. Se comprobaron HTTP 200, los ocho
   scripts públicos, sus señales nuevas y el backend real. El usuario confirmó
   después el acceso y consulta en producción. La cuarta entrega, de fechas de
-  reportes, está preparada para validación en Preview.
+  reportes, está validada en Preview y pendiente de publicación.
 - Se comprobó en sus archivos públicos que la app incorpora 8192 para el indicador
   de almacenamiento y la dirección del proyecto Supabase esperado. Ese indicador
   es una referencia del plan, no una medición del espacio libre físico del disco.
@@ -167,8 +167,14 @@ America/Mexico_City para el día del filtro y para las fechas mostradas:
   concurrencia ni los cálculos de tiempo transcurrido. No hay SQL, cambios de
   claves, variables, roles ni dependencias.
 
-La validación manual del usuario en Preview y la publicación en producción de
-esta cuarta entrega están pendientes. No requiere migraciones de Supabase.
+El usuario confirmó Ready del Preview dbdeafd y el texto de horario de la Ciudad
+de México. Confirmó que Desde 12/11/2026 y Hasta 11/11/2026 muestran el aviso y
+deshabilitan las tres salidas. Con ambas fechas en 12/11/2026 y expediente
+PRUEBA-001, confirmó documentos del día y botones habilitados. Después confirmó
+los mismos documentos y fechas/horas en pantalla, Excel y Ver PDF.
+
+La publicación en producción de esta cuarta entrega está pendiente de la
+instrucción del usuario. No requiere migraciones de Supabase.
 
 ## Validación reproducible
 
