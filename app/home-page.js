@@ -8,6 +8,7 @@ import { createDocumentOperationClient, documentOperationArguments } from "@/lib
 import { createDocumentCreationClient } from "@/lib/document-creation.mjs";
 import { findCatalogRecord, indexReportMovements } from "@/lib/office-lookups.mjs";
 import { buildQrPrintHtml, createQrImageCache, preloadQrLibrary } from "@/lib/qr-labels.mjs";
+import { authErrorMessage, createSessionRecovery, withAuthDeadline } from "@/lib/auth-recovery.mjs";
 
 const supabase = createClient();
 const DEFAULT_DOCUMENT_TYPES = [
@@ -250,6 +251,10 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const sessionUserId = session?.user?.id;
   const sessionEmail = session?.user?.email;
   const [loadingSession, setLoadingSession] = useState(true);
+  const [authMessage, setAuthMessage] = useState(null);
+  const [sessionRecoveryError, setSessionRecoveryError] = useState(null);
+  const sessionRecoveryRef = useRef(null);
+  const signInInFlight = useRef(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [number, setNumber] = useState("");
@@ -375,16 +380,26 @@ export default function HomePage({ initialView = "panel" } = {}) {
   useEffect(() => {
     if (!isSupabaseConfigured) return undefined;
 
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoadingSession(false);
+    const recovery = createSessionRecovery({
+      getSession: () => supabase.auth.getSession(),
+      onSession: setSession,
+      onError: setSessionRecoveryError,
+      onLoading: setLoadingSession,
     });
+    sessionRecoveryRef.current = recovery;
 
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
+    const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      // An empty INITIAL_SESSION must not hide a failed recovery. getSession
+      // handles that result; later sign-in/out events supersede older reads.
+      if (event !== "INITIAL_SESSION" || nextSession) recovery.accept(nextSession);
     });
+    recovery.load();
 
-    return () => data.subscription.unsubscribe();
+    return () => {
+      recovery.dispose();
+      if (sessionRecoveryRef.current === recovery) sessionRecoveryRef.current = null;
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -464,15 +479,26 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function signIn(event) {
     event.preventDefault();
+    if (signInInFlight.current) return;
+    signInInFlight.current = true;
+    sessionRecoveryRef.current?.invalidate();
     setBusy(true);
     reportRefreshVersion.current += 1;
     setMessage(null);
-
-    const { error } = await supabase.auth.signInWithPassword({ email: usernameToEmail(email), password });
-    setBusy(false);
-
-    if (error) {
-      setMessage({ type: "error", text: "Correo o contraseña incorrectos." });
+    setAuthMessage(null);
+    setSessionRecoveryError(null);
+    try {
+      const { data, error } = await withAuthDeadline(() => supabase.auth.signInWithPassword({ email: usernameToEmail(email), password }));
+      if (error) setAuthMessage(authErrorMessage(error));
+      else if (data?.session) {
+        sessionRecoveryRef.current?.accept(data.session);
+        setPassword("");
+      } else setAuthMessage(authErrorMessage(null));
+    } catch (error) {
+      setAuthMessage(authErrorMessage(error));
+    } finally {
+      signInInFlight.current = false;
+      setBusy(false);
     }
   }
 
@@ -1233,7 +1259,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }
 
   if (loadingSession) {
-    return <main className="center-shell">Cargando RASTREADOC…</main>;
+    return <main className="center-shell"><p role="status">Recuperando tu sesión…</p></main>;
   }
 
   if (!session) {
@@ -1246,11 +1272,12 @@ export default function HomePage({ initialView = "panel" } = {}) {
         </section>
         <form className="panel login-panel" onSubmit={signIn}>
           <h2>Iniciar sesión</h2>
-          <p>Utiliza el usuario que creaste en Supabase.</p>
-          <label>Usuario o correo<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Ejemplo: supervisor" required /></label>
-          <label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-          {message && <div role="status" aria-live="polite" className={`notice ${message.type}`}>{message.text}</div>}
+          <p>Ingresa con tu usuario de la oficina.</p>
+          <label>Usuario o correo<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Ejemplo: supervisor" required disabled={busy} /></label>
+          <label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required disabled={busy} /></label>
+          {(authMessage || sessionRecoveryError) && <div role="status" aria-live="polite" className="notice error">{authMessage || sessionRecoveryError}</div>}
           <button type="submit" disabled={busy}>{busy ? "Ingresando…" : "Ingresar"}</button>
+          {sessionRecoveryError && <button type="button" className="secondary" disabled={busy} onClick={() => { setAuthMessage(null); sessionRecoveryRef.current?.load(); }}>Reintentar sesión</button>}
         </form>
       </main>
     );

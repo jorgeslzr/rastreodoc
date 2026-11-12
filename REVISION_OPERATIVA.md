@@ -18,7 +18,10 @@
   e9f7e590c87a603c75bc8ebe149fb842ae789b3c, después de instalar la migración de
   guardado atómico con la oficina sin uso. El usuario confirmó acceso, consulta
   de un expediente real e historial. Al iniciar esta segunda entrega, main
-  continúa en ese commit.
+  continuaba en ese commit. La mejora de alta y QR se publicó después en
+  20f3b3898b7e4feea55e4b0574827bd5b5b236e6; se comprobaron HTTP 200, los ocho
+  scripts públicos, sus señales nuevas y el backend real. El usuario confirmó
+  después la recarga y consulta de un expediente e historial en producción.
 - Se comprobó en sus archivos públicos que la app incorpora 8192 para el indicador
   de almacenamiento y la dirección del proyecto Supabase esperado. Ese indicador
   es una referencia del plan, no una medición del espacio libre físico del disco.
@@ -101,9 +104,35 @@ con el código 60da4e4 y registros ficticios del proyecto Free:
 
 La lectura con el lector físico está pendiente: el usuario no tiene ese equipo
 en esta computadora. Las pruebas automáticas verifican que se mantiene el contenido
-QR anterior, pero no sustituyen esa comprobación de hardware. La publicación en
-main queda pendiente de la instrucción del usuario. La prueba local de PDF valida
+QR anterior, pero no sustituyen esa comprobación de hardware. El usuario autorizó
+publicar esta entrega y confirmó la consulta en producción. La prueba local de PDF valida
 geometría y páginas, sin medir el tiempo físico de la impresora.
+
+## Tercera entrega: mensajes de acceso y recuperación de sesión
+
+Preparada para validar en el Preview aislado del proyecto Free:
+
+- El mensaje de usuario/contraseña incorrectos se reserva para errores de
+  credenciales confirmados. Los fallos de conexión, servicio y límite de intentos
+  reciben mensajes distintos y accionables, sin exponer detalles internos.
+- Las solicitudes de Auth tienen un límite de 15 segundos, incluido el cuerpo
+  de la respuesta. Las esperas de la interfaz terminan a los 20 segundos y
+  liberan los controles aun si una operación del SDK sigue pendiente.
+- Recuperar una sesión maneja errores y permite Reintentar sesión. Una respuesta
+  antigua no reemplaza un acceso o una recuperación posteriores. El suscriptor
+  de Auth conserva callbacks síncronos para evitar bloqueos de sesión.
+- El inicio de sesión bloquea doble clic y campos durante la solicitud. Conserva
+  los datos si falla y borra la contraseña del formulario después de confirmar
+  el acceso. Los avisos de Auth se separan de los avisos de operaciones.
+- El fetch especial limita únicamente rutas /auth/v1/. Las escrituras de datos
+  mantienen su cuerpo, headers y señal de cancelación existentes; conservan sus
+  protocolos de guardado incierto y verificación.
+- La recuperación de una cookie con sesión expirada y servicio temporalmente
+  caído se probó en navegador: ofrece reintentar y se recupera al volver el
+  servicio, sin pedir de nuevo la contraseña.
+
+Esta entrega no cambia roles, claves, variables o esquema de Supabase. Su
+publicación en producción requiere primero la validación del usuario en Preview.
 
 ## Validación reproducible
 
@@ -135,9 +164,12 @@ paquetes verificados por APT, extraídos sin instalar nada en el sistema:
 `/tmp/rastreodoc-pg-packages/root/usr/lib/postgresql/17/bin`.
 Esa ruta temporal puede no existir en una máquina futura.
 
-Resultados locales de esta entrega: 25 pruebas JavaScript, 34 de PostgreSQL y
-13 de navegador aprobadas. Compilación correcta y lint sin errores, con una
-advertencia existente sobre la imagen del QR.
+Para alta y QR se aprobaron 25 pruebas JavaScript, 34 de PostgreSQL y 13 de
+navegador, además de compilación y lint. Para mensajes de acceso se aprobaron
+37 pruebas JavaScript y 20 de navegador, incluidos los flujos anteriores de
+alta, movimientos y QR. Las pruebas de PostgreSQL no se repitieron porque esta
+entrega no modifica SQL; se conserva su resultado anterior. Lint sin errores,
+con la advertencia existente sobre la imagen del QR.
 
 ## Proyecto Supabase de pruebas
 
@@ -216,10 +248,9 @@ no recurre a guardados separados si la función no está disponible.
 - Verificar si el segundo sistema usa Supabase Storage. Los archivos de Storage
   necesitan respaldo aparte de la base de datos.
 - Preparar una copia externa y su proceso de comprobación.
-- La autenticación conserva mensajes genéricos y carece de límites de espera
-  explícitos para getSession/signIn; la revisión de código detectó ese pendiente,
-  pero no se estableció como causa de la incidencia de acceso y no se cambió en
-  esta entrega de guardados.
+- Los mensajes y límites de espera de getSession/signIn están corregidos en la
+  tercera entrega, pendiente de validación en Preview y publicación coordinada.
+  No se establecieron como causa de la antigua incidencia de acceso a Preview.
 
 ## Proyectos
 
@@ -227,7 +258,6 @@ no recurre a guardados separados si la función no está disponible.
 - Vercel: https://vercel.com/jasg/rastreodoc
 - Supabase: https://supabase.com/dashboard/project/vmmafjnhtluinmmjyigv
 
-La primera entrega está en producción en e9f7e59. La segunda se desarrolla en
-codex/alta-y-qr-rapidos y se valida usando codex/rastreadoc-pruebas, que conserva
-los overrides del proyecto Free. Su publicación en main queda pendiente de la
-instrucción del usuario; no requiere volver a ejecutar la migración de guardados.
+Las dos primeras entregas están publicadas en main hasta 20f3b38. La tercera se
+desarrolla en codex/mensajes-acceso y se valida usando codex/rastreadoc-pruebas,
+que conserva los overrides del proyecto Free. No necesita ejecutar migraciones.

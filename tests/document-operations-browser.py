@@ -51,6 +51,8 @@ class SupabaseFixture:
         self.origin = origin
         self.scenario = scenario
         self.operations = []
+        self.auth_attempts = []
+        self.held_auth = None
         self.reads = []
         self.creations = []
         self.created_documents = {}
@@ -120,14 +122,25 @@ class SupabaseFixture:
             self.fulfill(route, {})
             return
         if parsed.path.startswith("/auth/v1/"):
-            now = int(time.time())
-            user = {"id": USER_ID, "aud": "authenticated", "role": "authenticated", "email": "prueba@example.invalid", "app_metadata": {}, "user_metadata": {}}
-            token = ".".join([
-                jwt_part({"alg": "HS256", "typ": "JWT"}),
-                jwt_part({"sub": USER_ID, "aud": "authenticated", "role": "authenticated", "exp": now + 3600, "iat": now}),
-                "fictional-test-signature",
-            ])
-            self.fulfill(route, {"access_token": token, "token_type": "bearer", "expires_in": 3600, "expires_at": now + 3600, "refresh_token": "fictional-refresh-token", "user": user} if parsed.path.endswith("/token") else user)
+            if parsed.path.endswith("/token"):
+                self.auth_attempts.append(copy.deepcopy(request.post_data_json))
+                failures = {
+                    "auth_credentials": (400, "invalid_credentials", "Invalid login credentials"),
+                    "auth_rate": (429, "over_request_rate_limit", "Fictional rate limit"),
+                    "auth_service": (503, "unexpected_failure", "Fictional service outage"),
+                    "auth_unconfirmed": (400, "email_not_confirmed", "Fictional unconfirmed email"),
+                }
+                if self.scenario in failures:
+                    status, code, message = failures[self.scenario]
+                    self.fulfill(route, {"code": code, "error_code": code, "msg": message}, status)
+                    return
+                if self.scenario == "auth_connection":
+                    route.abort("connectionfailed")
+                    return
+                if self.scenario == "auth_delayed":
+                    self.held_auth = route
+                    return
+            self.respond_auth(route, parsed.path)
             return
         if parsed.path == "/rest/v1/rpc/get_database_storage_usage":
             self.fulfill(route, 28 * 1024 * 1024)
@@ -197,6 +210,25 @@ class SupabaseFixture:
             return
         self.fulfill(route, {"message": "Unexpected fixture path"}, 404)
 
+    def auth_payload(self, lifetime=3600):
+        now = int(time.time())
+        user = {"id": USER_ID, "aud": "authenticated", "role": "authenticated", "email": "prueba@example.invalid", "app_metadata": {}, "user_metadata": {}}
+        token = ".".join([
+            jwt_part({"alg": "HS256", "typ": "JWT"}),
+            jwt_part({"sub": USER_ID, "aud": "authenticated", "role": "authenticated", "exp": now + lifetime, "iat": now + min(lifetime, 0)}),
+            "fictional-test-signature",
+        ])
+        return {"access_token": token, "token_type": "bearer", "expires_in": lifetime, "expires_at": now + lifetime, "refresh_token": "fictional-refresh-token", "user": user}
+
+    def respond_auth(self, route, path):
+        payload = self.auth_payload()
+        self.fulfill(route, payload if path.endswith("/token") else payload["user"])
+
+    def release_auth(self):
+        route = self.held_auth
+        self.held_auth = None
+        self.respond_auth(route, "/auth/v1/token")
+
     def respond_operation(self, route, args):
         if self.scenario == "conflict" and len(self.operations) == 1:
             self.document.update(status="RECHAZADO", label="Cambio de otra computadora", last_movement_at="2026-11-09T12:00:00.333333+00:00")
@@ -248,12 +280,14 @@ class BrowserOperations(unittest.TestCase):
     base_url = None
     browser = None
 
-    def open_app(self, scenario, configure=None):
+    def open_login(self, scenario, configure=None, expired_session=False):
         context = self.browser.new_context()
         self.addCleanup(context.close)
         fixture = SupabaseFixture(self.base_url, scenario)
         if configure:
             configure(fixture)
+        if expired_session:
+            context.add_cookies([{"name": "sb-operation-test-auth-token", "value": "base64-" + jwt_part(fixture.auth_payload(lifetime=-3600)), "url": self.base_url}])
         context.route("**/*", fixture.route)
         page = context.new_page()
         page.set_default_timeout(10000)
@@ -264,15 +298,83 @@ class BrowserOperations(unittest.TestCase):
             dialog.dismiss() if dialog.type == "beforeunload" else dialog.accept()
         page.on("dialog", handle_dialog)
         page.goto(self.base_url, wait_until="domcontentloaded")
+        self.addCleanup(lambda: self.assertEqual(errors, [], "Browser runtime errors"))
+        self.addCleanup(lambda: self.assertEqual(fixture.unexpected_hosts, [], "An unexpected external destination was blocked"))
+        self.addCleanup(lambda: self.assertEqual(fixture.direct_writes, [], "UI must use the atomic RPC"))
+        return page, fixture
+
+    def open_app(self, scenario, configure=None):
+        page, fixture = self.open_login(scenario, configure)
         page.get_by_label("Usuario o correo").fill("prueba")
         page.get_by_label("Contraseña", exact=True).fill("fictional-test-password")
         page.get_by_role("button", name="Ingresar", exact=True).click()
         expect(page.get_by_role("navigation", name="Menú principal")).to_be_visible()
         expect(page.get_by_text("prueba", exact=True).first).to_be_visible()
-        self.addCleanup(lambda: self.assertEqual(errors, [], "Browser runtime errors"))
-        self.addCleanup(lambda: self.assertEqual(fixture.unexpected_hosts, [], "An unexpected external destination was blocked"))
-        self.addCleanup(lambda: self.assertEqual(fixture.direct_writes, [], "UI must use the atomic RPC"))
         return page, fixture
+
+    def failed_login_then_retry(self, scenario, expected):
+        page, fixture = self.open_login(scenario)
+        page.get_by_label("Usuario o correo").fill("prueba")
+        page.get_by_label("Contraseña", exact=True).fill("fictional-test-password")
+        login = page.get_by_role("button", name="Ingresar", exact=True)
+        login.click()
+        expect(page.get_by_role("status")).to_contain_text(expected)
+        expect(login).to_be_enabled()
+        expect(page.get_by_label("Usuario o correo")).to_have_value("prueba")
+        expect(page.get_by_label("Contraseña", exact=True)).to_have_value("fictional-test-password")
+        if scenario != "auth_credentials":
+            self.assertNotIn("contraseña incorrectos", page.get_by_role("status").inner_text())
+        fixture.scenario = "normal"
+        page.get_by_label("Contraseña", exact=True).fill("fictional-corrected-password")
+        login.click()
+        expect(page.get_by_role("navigation", name="Menú principal")).to_be_visible()
+        self.assertGreaterEqual(len(fixture.auth_attempts), 2)
+        return page, fixture
+
+    def test_auth_incorrect_password_is_specific_and_success_clears_the_password(self):
+        page, _ = self.failed_login_then_retry("auth_credentials", "Usuario o contraseña incorrectos")
+        page.get_by_role("button", name="Cerrar sesión", exact=True).click()
+        expect(page.get_by_label("Contraseña", exact=True)).to_have_value("")
+        expect(page.get_by_role("button", name="Ingresar", exact=True)).to_be_enabled()
+
+    def test_auth_network_failure_is_not_reported_as_an_incorrect_password(self):
+        self.failed_login_then_retry("auth_connection", "problema de conexión")
+
+    def test_auth_service_failure_has_a_service_message_and_releases_the_button(self):
+        self.failed_login_then_retry("auth_service", "servicio de acceso no está disponible")
+
+    def test_auth_rate_limit_explains_waiting_and_allows_a_later_retry(self):
+        self.failed_login_then_retry("auth_rate", "Espera unos minutos")
+
+    def test_auth_unconfirmed_account_has_a_specific_message(self):
+        self.failed_login_then_retry("auth_unconfirmed", "cuenta necesita confirmar el correo")
+
+    def test_auth_double_submission_has_one_request_and_keeps_fields_locked_until_done(self):
+        page, fixture = self.open_login("auth_delayed")
+        page.get_by_label("Usuario o correo").fill("prueba")
+        page.get_by_label("Contraseña", exact=True).fill("fictional-test-password")
+        page.get_by_role("button", name="Ingresar", exact=True).evaluate("button=>{button.click();button.click();}")
+        expect(page.get_by_role("button", name="Ingresando…", exact=True)).to_be_disabled()
+        expect(page.get_by_label("Usuario o correo")).to_be_disabled()
+        expect(page.get_by_label("Contraseña", exact=True)).to_be_disabled()
+        deadline = time.monotonic() + 5
+        while fixture.held_auth is None and time.monotonic() < deadline:
+            page.wait_for_timeout(20)
+        self.assertIsNotNone(fixture.held_auth)
+        self.assertEqual(len(fixture.auth_attempts), 1)
+        fixture.release_auth()
+        expect(page.get_by_role("navigation", name="Menú principal")).to_be_visible()
+        self.assertEqual(len(fixture.auth_attempts), 1)
+
+    def test_auth_saved_session_service_failure_exposes_recovery_and_recovers_without_password(self):
+        page, fixture = self.open_login("auth_service", expired_session=True)
+        retry = page.get_by_role("button", name="Reintentar sesión", exact=True)
+        expect(retry).to_be_visible(timeout=24000)
+        expect(retry).to_be_enabled()
+        self.assertGreater(len(fixture.auth_attempts), 0)
+        fixture.scenario = "normal"
+        retry.click()
+        expect(page.get_by_role("navigation", name="Menú principal")).to_be_visible(timeout=15000)
 
     def boletas(self, page):
         page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Boletas", exact=True).click()
