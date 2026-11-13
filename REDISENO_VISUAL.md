@@ -81,11 +81,14 @@ Validación realizada con datos ficticios:
 
 La rama de trabajo es codex/rediseno-visual-rastreadoc. El Preview se publica en
 codex/rastreadoc-pruebas, que conserva la conexión al proyecto Free aislado.
-Producción permanece en la versión anterior mientras se revisa el diseño.
+El 13 de noviembre el usuario confirmó la apariencia en Reportes frente a su
+referencia y autorizó publicar el rediseño en el sistema de la oficina.
 
 Abrir el último Preview Ready de esa rama en Vercel, recargar con Ctrl+F5 y usar
 la cuenta de pruebas. Recorrer las nueve secciones y revisar también una ventana
 estrecha. Las capturas automatizadas usan exclusivamente datos ficticios.
+Después de una publicación, terminar cualquier captura antes de recargar los
+equipos de la oficina para recibir la interfaz nueva.
 
 Alias: https://rastreodoc-git-codex-rastreadoc-pruebas-jasg.vercel.app/
 

@@ -282,7 +282,8 @@ existentes; el buscador conserva el alcance de Buscar y la campana representa
 el seguimiento vencido existente. No se agregan procesos de notificación ni
 generación de reportes, y se conserva la tabla con todos sus campos.
 
-El usuario revisará el rediseño en Preview antes de publicarlo en producción.
+El usuario confirmó la apariencia de Reportes en Preview frente a la referencia
+y el 13 de noviembre autorizó publicar el rediseño en el dominio de la oficina.
 Se aprobaron 67 pruebas JavaScript y 45 de navegador. Las comprobaciones nuevas
 recorren las nueve secciones y los cuatro perfiles, comprueban indicadores reales,
 búsqueda existente y navegación responsive sin desbordamiento ni pérdida de
