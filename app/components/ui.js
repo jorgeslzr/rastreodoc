@@ -23,6 +23,7 @@ const paths = {
   logout: "M9 3H3v18h6m6-16 7 7-7 7M7 12h15",
   menu: "M3 6h18M3 12h18M3 18h18",
   close: "m6 6 12 12M6 18 18 6",
+  trash: "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7",
 };
 
 export default function Icon({ name, className = "" }) {

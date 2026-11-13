@@ -6,10 +6,12 @@ import SectionErrorBoundary from "./section-error-boundary";
 import { BrandHeader } from "./components/brand";
 import Icon, { ActionButton } from "./components/ui";
 import WorkspaceShell from "./components/workspace-shell";
+import DocumentDeletionDialog from "./components/document-deletion-dialog";
 import { refreshAfterSave, scanLookupMessage } from "@/lib/operation-feedback.mjs";
 import { createDocumentOperationClient, documentOperationArguments } from "@/lib/document-operations.mjs";
 import { createDocumentCreationClient } from "@/lib/document-creation.mjs";
 import { createCaseFileCreationClient } from "@/lib/case-file-creation.mjs";
+import { createDocumentDeletionClient } from "@/lib/document-deletion.mjs";
 import { findCatalogRecord, indexReportMovements } from "@/lib/office-lookups.mjs";
 import { buildQrPrintHtml, createQrImageCache, preloadQrLibrary } from "@/lib/qr-labels.mjs";
 import { authErrorMessage, createSessionRecovery, withAuthDeadline } from "@/lib/auth-recovery.mjs";
@@ -342,6 +344,12 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const [pendingSave, setPendingSave] = useState(null);
   const [pendingCreation, setPendingCreation] = useState(false);
   const [pendingCaseCreation, setPendingCaseCreation] = useState(false);
+  const [deletePreview, setDeletePreview] = useState(null);
+  const [pendingDeletion, setPendingDeletion] = useState(false);
+  const deletionInFlight = useRef(false);
+  const [deletionClient] = useState(() => createDocumentDeletionClient(
+    (args, signal) => supabase.rpc("delete_archived_document", args).abortSignal(signal),
+  ));
   const caseCreationInFlight = useRef(false);
   const creationInFlight = useRef(false);
   const [processingScan, setProcessingScan] = useState(false);
@@ -361,7 +369,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }));
   const scanInFlight = useRef(false);
   const reportRefreshVersion = useRef(0);
-  const documentSaveBlocked = busy || processingScan || Boolean(pendingSave) || pendingCreation || pendingCaseCreation;
+  const documentSaveBlocked = busy || processingScan || Boolean(pendingSave) || pendingCreation || pendingCaseCreation || pendingDeletion;
   const reportRangeError = reportDateRangeError(reportStart, reportEnd);
 
   useEffect(() => {
@@ -369,14 +377,14 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }, [activeView, documentSaveBlocked]);
 
   useEffect(() => {
-    if (!pendingCreation && !pendingSave && !pendingCaseCreation) return;
+    if (!pendingCreation && !pendingSave && !pendingCaseCreation && !pendingDeletion) return;
     const preserveVerification = (event) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", preserveVerification);
     return () => window.removeEventListener("beforeunload", preserveVerification);
-  }, [pendingCreation, pendingSave, pendingCaseCreation]);
+  }, [pendingCreation, pendingSave, pendingCaseCreation, pendingDeletion]);
 
   function openView(view) {
     setActiveView(view);
@@ -745,7 +753,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function createDocument(event) {
     event.preventDefault();
-    if (creationInFlight.current || creationClient.hasPending() || caseCreationInFlight.current || caseCreationClient.hasPending()
+    if (deletionClient.hasPending() || creationInFlight.current || creationClient.hasPending() || caseCreationInFlight.current || caseCreationClient.hasPending()
       || operationClient.isInFlight() || operationClient.hasPending()) return;
     const selectedCase = caseFiles.find((caseFile) => caseFile.number.toLocaleLowerCase("es-MX") === caseSearch.trim().toLocaleLowerCase("es-MX"));
     if (!selectedCase) {
@@ -962,6 +970,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }
 
   async function persistDocumentChange(document, changes, retry = false) {
+    if (deletionClient.hasPending()) return null;
     if (operationClient.isInFlight() || creationInFlight.current || creationClient.hasPending()) return null;
     setBusy(true);
     reportRefreshVersion.current += 1;
@@ -1022,6 +1031,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   async function scanDocument(event) {
     event.preventDefault();
+    if (deletionClient.hasPending()) return;
     if (scanInFlight.current || operationClient.isInFlight() || operationClient.hasPending()
       || creationInFlight.current || creationClient.hasPending()) return;
     const token = normalizeScannedToken(scanToken);
@@ -1199,6 +1209,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }
 
   async function archiveDocument(document) {
+    if (documentSaveBlocked || deletionClient.hasPending()) return;
     const confirmed = window.confirm(`Vas a archivar ${formatDocumentName(document)} del expediente ${document.case_files.number}. No se borrará el historial, solo se ocultará de la operación diaria. ¿Confirmas?`);
     if (!confirmed) return;
     setBusy(true);
@@ -1221,6 +1232,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   }
 
   async function restoreDocument(document) {
+    if (documentSaveBlocked || deletionClient.hasPending()) return;
     setBusy(true);
     reportRefreshVersion.current += 1;
     setMessage(null);
@@ -1235,6 +1247,48 @@ export default function HomePage({ initialView = "panel" } = {}) {
     setArchivedDocuments((current) => current.filter((item) => item.id !== document.id));
     setDocuments((current) => [{ ...document, archived_at: null }, ...current]);
     await refreshReportAfterSave("Documento restaurado y disponible nuevamente.");
+  }
+
+  function prepareDeletion(document) {
+    if (documentSaveBlocked || deletionClient.hasPending() || !["admin", "supervisor"].includes(currentRole)) return;
+    setMessage(null);
+    setDeletePreview(document);
+  }
+
+  async function deleteArchivedDocument(confirmation, verify = false) {
+    if (deletionInFlight.current || !deletePreview || (documentSaveBlocked && !verify)) return;
+    deletionInFlight.current = true;
+    setBusy(true);
+    setPendingDeletion(true);
+    setMessage(null);
+    reportRefreshVersion.current += 1;
+    const document = deletePreview;
+    try {
+      const result = verify ? await deletionClient.verify() : await deletionClient.remove(document, confirmation);
+      setPendingDeletion(deletionClient.hasPending());
+      if (result.kind === "deleted") {
+        setArchivedDocuments((current) => current.filter(({ id }) => id !== document.id));
+        setDocuments((current) => current.filter(({ id }) => id !== document.id));
+        setReportMovements((current) => current.filter((movement) => movement.documents?.id !== document.id));
+        setSelectedQrIds((current) => current.filter((id) => id !== document.id));
+        setScannedDocument((current) => current?.id === document.id ? null : current);
+        setHistoryPreview((current) => current?.document.id === document.id ? null : current);
+        setQrPreview((current) => current?.document.id === document.id ? null : current);
+        setRecentCreation((current) => current?.document.id === document.id ? null : current);
+        setDeletePreview(null);
+        setMessage({ type: "success", text: `Documento ${formatDocumentName(document)} del expediente ${document.case_files.number} eliminado definitivamente junto con su historial. El expediente y sus otros documentos se conservaron.` });
+      } else if (result.kind === "conflict") {
+        setDeletePreview(null);
+        setMessage({ type: "error", text: "El documento cambió, fue restaurado o ya no está disponible. No se realizó esta eliminación. Recarga Archivados y revisa su información antes de continuar." });
+      } else if (result.kind === "failed") {
+        setMessage({ scope: "documentDeletion", type: "error", text: "No se eliminó el documento. La eliminación no está disponible o tu sesión no permite realizarla. Revisa la configuración antes de volver a intentar." });
+      } else {
+        setMessage({ scope: "documentDeletion", type: "error", text: "No pudimos confirmar la eliminación. El documento podría haberse eliminado. Usa Verificar eliminación para comprobar la misma solicitud antes de continuar." });
+      }
+    } finally {
+      deletionInFlight.current = false;
+      setBusy(false);
+    }
   }
 
   function exportReportToExcel() {
@@ -1525,7 +1579,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
         <button onClick={() => showQr(lastCreatedDocument)} disabled={Boolean(qrTask)}><Icon name="qr" />Ver e imprimir QR</button>
       </section>}
       </>}
-      {message && message.scope !== "caseCreation" && <div role="status" aria-live="polite" className={`notice page-notice ${message.type}`}>{message.text}</div>}
+      {message && message.scope !== "caseCreation" && !(message.scope === "documentDeletion" && deletePreview) && <div role="status" aria-live="polite" className={`notice page-notice ${message.type}`}>{message.text}</div>}
       {pendingSave && <div className="page-notice"><button className="secondary" onClick={verifyPendingSave} disabled={busy}>{busy ? "Verificando…" : "Verificar guardado"}</button></div>}
       {pendingCreation && <div className="page-notice"><button className="secondary" onClick={verifyDocumentCreation} disabled={busy}>{busy ? "Verificando…" : "Verificar alta"}</button></div>}
       {activeView !== "alta" && caseFeedback}
@@ -1698,9 +1752,10 @@ export default function HomePage({ initialView = "panel" } = {}) {
       {activeView === "archivados" && <section className="archived-section">
         <div className="archived-heading"><div><p className="eyebrow">DOCUMENTOS OCULTOS</p><h2>Archivados</h2><p>Estos documentos no aparecen en la operación diaria, pero conservan todo su historial.</p></div><strong>{archivedDocuments.length} archivados</strong></div>
         {archivedDocuments.length === 0 ? <p className="empty-state">No hay documentos archivados.</p> : <div className="documents-list">
-          {archivedDocuments.map((document) => <article className="document-row archived-row" key={document.id}><div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span><span>Archivado: {formatOfficeDateTime(document.archived_at)}</span></div><div className="row-actions"><button onClick={() => restoreDocument(document)} disabled={busy}><Icon name="history" />Restaurar</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}><Icon name="history" />Historial</button></div></article>)}
+          {archivedDocuments.map((document) => <article className="document-row archived-row" key={document.id}><div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span><span>Archivado: {formatOfficeDateTime(document.archived_at)}</span></div><div className="row-actions"><button onClick={() => restoreDocument(document)} disabled={documentSaveBlocked}><Icon name="history" />Restaurar</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}><Icon name="history" />Historial</button>{canManageAll && <ActionButton type="button" icon="trash" className="danger-button" onClick={() => prepareDeletion(document)} disabled={documentSaveBlocked}>Eliminar definitivamente</ActionButton>}</div></article>)}
         </div>}
       </section>}
+      {deletePreview && <DocumentDeletionDialog key={deletePreview.id} document={deletePreview} name={formatDocumentName(deletePreview)} busy={busy} pending={pendingDeletion} message={message?.scope === "documentDeletion" ? message : null} onClose={() => { if (!deletionInFlight.current && !deletionClient.hasPending()) { setDeletePreview(null); setMessage(null); } }} onDelete={deleteArchivedDocument} onVerify={() => deleteArchivedDocument(null, true)} />}
       {casePreview && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`Expediente ${casePreview}`}>
           <section className="case-modal">

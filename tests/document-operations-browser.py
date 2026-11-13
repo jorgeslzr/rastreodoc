@@ -53,6 +53,10 @@ class SupabaseFixture:
         self.origin = origin
         self.scenario = scenario
         self.operations = []
+        self.deletions = []
+        self.deletion_receipts = {}
+        self.held_deletion = None
+        self.archived_documents = []
         self.auth_attempts = []
         self.held_auth = None
         self.held_load = None
@@ -158,6 +162,14 @@ class SupabaseFixture:
             else:
                 self.respond_operation(route, args)
             return
+        if parsed.path == "/rest/v1/rpc/delete_archived_document":
+            args = request.post_data_json
+            self.deletions.append(copy.deepcopy(args))
+            if self.scenario == "deletion_delayed":
+                self.held_deletion = (route, args)
+            else:
+                self.respond_deletion(route, args)
+            return
         if parsed.path.startswith("/rest/v1/"):
             table = parsed.path.split("/")[-1]
             if table == "case_files" and request.method == "POST" and self.scenario.startswith("case_"):
@@ -231,7 +243,8 @@ class SupabaseFixture:
                         rows = [{**copy.deepcopy(self.document), "id": f"aaaaaaaa-aaaa-4aaa-8aaa-{index:012d}"} for index in range(1000)]
                         self.fulfill(route, rows)
                     return
-                rows = [] if archived == "not.is.null" else copy.deepcopy([self.document, *self.extra_documents, *self.created_documents.values()])
+                active_rows = [self.document, *self.extra_documents, *self.created_documents.values()]
+                rows = copy.deepcopy(self.archived_documents if archived == "not.is.null" else active_rows if archived == "is.null" else [*active_rows, *self.archived_documents])
                 if "id" in query:
                     document_id = query["id"][0].removeprefix("eq.")
                     rows = [row for row in rows if row["id"] == document_id]
@@ -344,6 +357,24 @@ class SupabaseFixture:
         }
         self.fulfill(route, data)
 
+    def respond_deletion(self, route, args):
+        if self.scenario in {"deletion_missing", "deletion_conflict"}:
+            conflict = self.scenario == "deletion_conflict"
+            self.fulfill(route, {"code": "PT409" if conflict else "PGRST202", "message": "Fictional deletion unavailable"}, 409 if conflict else 404)
+            return
+        if self.scenario == "deletion_expired" and len(self.deletions) == 2:
+            self.fulfill(route, {"code": "PGRST301", "message": "Fictional verification session expired"}, 401)
+            return
+        operation_id = args["p_operation_id"]
+        duplicate = operation_id in self.deletion_receipts
+        if not duplicate:
+            self.deletion_receipts[operation_id] = copy.deepcopy(args)
+            self.archived_documents = [row for row in self.archived_documents if row['id'] != args['p_document_id']]
+        if self.scenario in {"deletion_lost", "deletion_expired"} and len(self.deletions) == 1:
+            route.abort("connectionfailed")
+            return
+        self.fulfill(route, {"document_id": args['p_document_id'], "operation_id": operation_id, "deleted": True, "duplicate": duplicate})
+
     def release_lookup(self):
         route, rows = self.held_lookup
         self.held_lookup = None
@@ -428,6 +459,131 @@ class BrowserOperations(unittest.TestCase):
             document.update(id=f"aaaaaaaa-aaaa-4aaa-8aaa-{index:012d}", status=status, last_movement_at="2026-01-02T12:00:00+00:00")
             document["case_files"] = {"number": f"TEST-{index:03d}"}
             fixture.extra_documents.append(document)
+
+    @staticmethod
+    def deletion_fixture(fixture):
+        target = copy.deepcopy(fixture.document)
+        target.update(id="dddddddd-dddd-4ddd-8ddd-dddddddddddd", label="Archivo a eliminar", archived_at="2026-11-13T02:00:00.123456Z")
+        fixture.archived_documents = [target]
+
+    def open_deletion(self, page):
+        self.visual_navigate(page, 'Archivados')
+        page.get_by_role('button', name='Eliminar definitivamente', exact=True).click()
+        return page.get_by_role('dialog', name='Eliminar documento', exact=True)
+
+    def test_deletion_requires_explicit_confirmation_and_cancel_or_escape_send_nothing(self):
+        page, fixture = self.open_app('deletion_normal', configure=self.deletion_fixture)
+        dialog = self.open_deletion(page)
+        expect(dialog).to_contain_text('TEST-001')
+        expect(dialog).to_contain_text('CERTIFICADO — Archivo a eliminar')
+        expect(dialog).to_contain_text('El expediente y sus otros documentos se conservarán')
+        submit = dialog.get_by_role('button', name='Eliminar definitivamente', exact=True)
+        expect(submit).to_be_disabled()
+        page.keyboard.press('Shift+Tab')
+        expect(dialog.get_by_role('button', name='Cancelar', exact=True)).to_be_focused()
+        page.keyboard.press('Tab')
+        expect(dialog.get_by_role('button', name='Cerrar confirmación', exact=True)).to_be_focused()
+        dialog.get_by_label('Escribe ELIMINAR para confirmar').fill('eliminar')
+        expect(submit).to_be_disabled()
+        dialog.get_by_role('button', name='Cancelar', exact=True).click()
+        expect(dialog).not_to_be_visible()
+        dialog = self.open_deletion(page)
+        page.keyboard.press('Escape')
+        expect(dialog).not_to_be_visible()
+        self.assertEqual(fixture.deletions, [])
+
+    def test_deletion_confirms_once_and_preserves_other_documents_and_case(self):
+        page, fixture = self.open_app('deletion_normal', configure=self.deletion_fixture)
+        dialog = self.open_deletion(page)
+        dialog.get_by_label('Escribe ELIMINAR para confirmar').fill('ELIMINAR')
+        dialog.get_by_role('button', name='Eliminar definitivamente', exact=True).click()
+        expect(dialog).not_to_be_visible()
+        expect(page.get_by_role('status')).to_contain_text('eliminado definitivamente junto con su historial')
+        expect(page.locator('.archived-section')).to_contain_text('No hay documentos archivados')
+        self.assertEqual(len(fixture.deletions), 1)
+        self.assertEqual(fixture.deletions[0]['p_expected_archived_at'], '2026-11-13T02:00:00.123456Z')
+        self.visual_navigate(page, 'Buscar')
+        expect(page.locator('.documents-list')).to_contain_text('Original')
+        self.visual_navigate(page, 'Alta')
+        expect(page.locator('datalist option[value="TEST-001"]')).to_have_count(1)
+
+    def test_deletion_double_click_waits_for_one_rpc_and_protects_reload(self):
+        page, fixture = self.open_app('deletion_delayed', configure=self.deletion_fixture)
+        dialog = self.open_deletion(page)
+        dialog.get_by_label('Escribe ELIMINAR para confirmar').fill('ELIMINAR')
+        dialog.get_by_role('button', name='Eliminar definitivamente', exact=True).evaluate('button=>{button.click();button.click();}')
+        expect(dialog.get_by_role('button', name='Cancelar', exact=True)).to_be_disabled()
+        expect(dialog.get_by_label('Escribe ELIMINAR para confirmar')).to_be_disabled()
+        page.wait_for_function("()=>document.querySelector('.deletion-modal button[type=submit]')?.disabled===true")
+        page.evaluate('()=>window.location.reload()')
+        deadline = time.monotonic() + 5
+        while 'beforeunload' not in fixture.dialog_types and time.monotonic() < deadline:
+            page.wait_for_timeout(20)
+        self.assertIn('beforeunload', fixture.dialog_types)
+        self.assertEqual(len(fixture.deletions), 1)
+        self.assertIsNotNone(fixture.held_deletion)
+        route, args = fixture.held_deletion
+        fixture.respond_deletion(route, args)
+        expect(dialog).not_to_be_visible()
+
+    def test_deletion_lost_reply_and_expired_verification_preserve_identity(self):
+        page, fixture = self.open_app('deletion_expired', configure=self.deletion_fixture)
+        dialog = self.open_deletion(page)
+        dialog.get_by_label('Escribe ELIMINAR para confirmar').fill('ELIMINAR')
+        dialog.get_by_role('button', name='Eliminar definitivamente', exact=True).click()
+        verify = dialog.get_by_role('button', name='Verificar eliminación', exact=True)
+        expect(verify).to_be_enabled()
+        expect(dialog.get_by_role('status')).to_contain_text('podría haberse eliminado')
+        page.keyboard.press('Tab')
+        expect(verify).to_be_focused()
+        page.keyboard.press('Escape')
+        expect(dialog).to_be_visible()
+        verify.click()
+        expect(verify).to_be_enabled()
+        expect(dialog.get_by_role('button', name='Cancelar', exact=True)).to_be_disabled()
+        verify.click()
+        expect(dialog).not_to_be_visible()
+        self.assertEqual(len(fixture.deletion_receipts), 1)
+        self.assertEqual(len(fixture.deletions), 3)
+        for request in fixture.deletions:
+            self.assertEqual(request, fixture.deletions[0])
+
+    def test_deletion_missing_rpc_and_conflict_are_not_reported_as_success(self):
+        for scenario in ['deletion_missing', 'deletion_conflict']:
+            with self.subTest(scenario=scenario):
+                page, fixture = self.open_app(scenario, configure=self.deletion_fixture)
+                dialog = self.open_deletion(page)
+                dialog.get_by_label('Escribe ELIMINAR para confirmar').fill('ELIMINAR')
+                dialog.get_by_role('button', name='Eliminar definitivamente', exact=True).click()
+                if scenario == 'deletion_missing':
+                    expect(dialog.get_by_role('status')).to_contain_text('No se eliminó el documento')
+                    expect(dialog.get_by_role('button', name='Cancelar', exact=True)).to_be_enabled()
+                else:
+                    expect(dialog).not_to_be_visible()
+                    expect(page.get_by_role('status')).to_contain_text('No se realizó esta eliminación')
+                self.assertEqual(len(fixture.archived_documents), 1)
+
+    def test_deletion_button_respects_existing_roles_and_mobile_dialog_fits(self):
+        for role in ['admin', 'supervisor', 'empleado', 'consulta']:
+            with self.subTest(role=role):
+                def configure(fixture):
+                    self.deletion_fixture(fixture)
+                    fixture.rows['profiles'][0]['role'] = role
+                page, fixture = self.open_app('deletion_normal', configure=configure, context_options={'viewport': {'width': 390, 'height': 844}, 'is_mobile': True, 'has_touch': True})
+                self.visual_navigate(page, 'Archivados')
+                button = page.get_by_role('button', name='Eliminar definitivamente', exact=True)
+                if role in ['admin', 'supervisor']:
+                    button.click()
+                    dialog = page.get_by_role('dialog', name='Eliminar documento', exact=True)
+                    expect(dialog).to_be_visible()
+                    self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 391)
+                    box = page.locator('.deletion-modal').bounding_box()
+                    self.assertLessEqual(box['width'], 390)
+                    page.add_style_tag(content='nextjs-portal { display:none !important; }')
+                    page.screenshot(path=f'/tmp/rastreodoc-eliminar-{role}-phone.png', full_page=True, animations='disabled')
+                else:
+                    expect(button).to_have_count(0)
+                self.assertEqual(fixture.deletions, [])
 
     def test_visual_desktop_all_sections_keep_real_indicators_and_controls(self):
         page, fixture = self.open_app("normal", configure=self.visual_fixture, context_options={"viewport": {"width": 1774, "height": 1000}, "locale": "es-MX"})

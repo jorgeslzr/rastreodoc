@@ -21,6 +21,7 @@ import uuid
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 MIGRATION = REPOSITORY / "supabase/migrations/20261110_atomic_document_operations.sql"
+DELETION_MIGRATION = REPOSITORY / "supabase/migrations/20261113_delete_archived_document.sql"
 ACTOR = "00000000-0000-0000-0000-000000000001"
 OTHER_ACTOR = "00000000-0000-0000-0000-000000000002"
 AGENCY = "00000000-0000-0000-0000-000000000010"
@@ -83,6 +84,8 @@ class DatabaseOperations(unittest.TestCase):
         cls.run_sql(schema.split(marker)[0])
         cls.run_sql(MIGRATION.read_text())
         cls.run_sql(MIGRATION.read_text())
+        cls.run_sql(DELETION_MIGRATION.read_text())
+        cls.run_sql(DELETION_MIGRATION.read_text())
         cls.run_sql(schema)
         cls.run_sql(f"""
           insert into auth.users values ('{ACTOR}'), ('{OTHER_ACTOR}');
@@ -711,6 +714,122 @@ class DatabaseOperations(unittest.TestCase):
             self.assertEqual(self.movement_count(original["id"]), 1)
         finally:
             self.run_sql("drop trigger test_context_failure on public.movements; drop function public.test_fail_context_movement();")
+
+    def archived_document(self):
+        self.run_sql(f"""insert into public.profiles(id,username,role)
+          values ('{ACTOR}','admin-local','admin'), ('{OTHER_ACTOR}','consulta-local','consulta')
+          on conflict(id) do update set role=excluded.role;""")
+        document = self.new_document()
+        self.save(document, p_requested_status="ENVIADO", p_receipt_number="DELETE-TEST")
+        self.run_sql(f"update public.documents set archived_at='2026-11-13T02:00:00.123456Z' where id={literal(document['id'])};", actor=ACTOR)
+        return self.document(document['id'])
+
+    def deletion_sql(self, document, operation_id=None, **changes):
+        parameters = dict(p_operation_id=operation_id or str(uuid.uuid4()), p_document_id=document['id'],
+                          p_expected_archived_at=document['archived_at'], p_expected_movement_at=document['last_movement_at'],
+                          p_expected_label=document['label'], p_confirmation='ELIMINAR')
+        parameters.update(changes)
+        return 'select public.delete_archived_document(' + ','.join(f'{key}=>{literal(value)}' for key,value in parameters.items()) + ');'
+
+    def test_deletion_removes_only_target_history_and_receipts_preserving_case_and_other_documents(self):
+        target = self.archived_document()
+        other = self.new_document()
+        case_before = self.run_sql(f"select row_to_json(c) from public.case_files c where id='{CASE_FILE}';")
+        result = json.loads(self.run_sql(self.deletion_sql(target), actor=ACTOR))
+        self.assertTrue(result['deleted'])
+        self.assertFalse(result['duplicate'])
+        self.assertEqual(self.run_sql(f"select count(*) from public.documents where id={literal(target['id'])};"), '0')
+        self.assertEqual(self.movement_count(target['id']), 0)
+        self.assertEqual(self.run_sql(f"select count(*) from public.document_operation_receipts where document_id={literal(target['id'])};"), '0')
+        self.assertEqual(self.document(other['id']), other)
+        self.assertEqual(self.movement_count(other['id']), 1)
+        self.assertEqual(self.run_sql(f"select row_to_json(c) from public.case_files c where id='{CASE_FILE}';"), case_before)
+
+    def test_deletion_lost_reply_can_be_verified_twice_in_different_timezones(self):
+        target = self.archived_document()
+        operation = str(uuid.uuid4())
+        sql = self.deletion_sql(target, operation)
+        self.run_sql(sql, actor=ACTOR)
+        for timezone in ['UTC', 'America/Mexico_City']:
+            result = json.loads(self.run_sql(f"set timezone={literal(timezone)};" + sql, actor=ACTOR))
+            self.assertTrue(result['duplicate'])
+        self.assertEqual(self.run_sql(f"select count(*) from public.document_deletion_receipts where operation_id='{operation}' and completed and deleted_movements=2;"), '1')
+
+    def test_deletion_requires_existing_management_role_and_session(self):
+        target = self.archived_document()
+        sql = self.deletion_sql(target)
+        self.run_sql(sql, actor='', error='PT401')
+        self.run_sql(sql, actor=OTHER_ACTOR, error='42501')
+        self.run_sql(f"update public.profiles set role='empleado' where id='{OTHER_ACTOR}';")
+        self.run_sql(sql, actor=OTHER_ACTOR, error='42501')
+        self.run_sql(f"delete from public.profiles where id='{OTHER_ACTOR}';")
+        self.run_sql(sql, actor=OTHER_ACTOR, error='42501')
+        self.assertEqual(self.movement_count(target['id']), 2)
+        self.run_sql(f"update public.profiles set role='supervisor' where id='{ACTOR}';")
+        self.assertTrue(json.loads(self.run_sql(sql, actor=ACTOR))['deleted'])
+
+    def test_deletion_rejects_active_restored_rearchived_and_changed_documents(self):
+        target = self.archived_document()
+        for changes, error in [({'p_confirmation': ''}, 'PT422'), ({'p_expected_archived_at': None}, 'PT422'),
+                               ({'p_expected_label': 'Wrong'}, 'PT409'), ({'p_expected_movement_at': '2020-01-01T00:00:00Z'}, 'PT409')]:
+            self.run_sql(self.deletion_sql(target, **changes), actor=ACTOR, error=error)
+        self.run_sql(f"update public.documents set archived_at=null where id={literal(target['id'])};", actor=ACTOR)
+        self.run_sql(self.deletion_sql(target), actor=ACTOR, error='PT409')
+        self.run_sql(f"update public.documents set archived_at='2026-11-13T02:00:00.123457Z' where id={literal(target['id'])};", actor=ACTOR)
+        self.run_sql(self.deletion_sql(target), actor=ACTOR, error='PT409')
+        self.assertEqual(self.movement_count(target['id']), 2)
+
+    def test_deletion_cannot_reuse_another_actor_or_payload_receipt(self):
+        target = self.archived_document()
+        other = self.archived_document()
+        operation = str(uuid.uuid4())
+        self.run_sql(self.deletion_sql(target, operation), actor=ACTOR)
+        self.run_sql(f"update public.profiles set role='admin' where id='{OTHER_ACTOR}';")
+        self.run_sql(self.deletion_sql(target, operation), actor=OTHER_ACTOR, error='PT409')
+        self.run_sql(self.deletion_sql(other, operation), actor=ACTOR, error='PT409')
+        self.assertEqual(self.movement_count(other['id']), 2)
+
+    def test_deletion_two_simultaneous_retries_confirm_one_deletion(self):
+        target = self.archived_document()
+        operation = str(uuid.uuid4())
+        sql = self.deletion_sql(target, operation)
+        barrier = threading.Barrier(2)
+        def run():
+            barrier.wait(timeout=5)
+            return self.execute('begin;' + sql + 'select pg_sleep(0.15); commit;', actor=ACTOR)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: run(), range(2)))
+        for result in results:
+            self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(result.stdout.strip().splitlines()[0]) for result in results]
+        self.assertEqual(sorted(reply['duplicate'] for reply in replies), [False, True])
+        self.assertEqual(self.movement_count(target['id']), 0)
+
+    def test_deletion_rolls_back_everything_if_final_delete_fails(self):
+        target = self.archived_document()
+        operation = str(uuid.uuid4())
+        self.run_sql(f"""create function public.test_block_delete() returns trigger language plpgsql as $$ begin
+          if old.id={literal(target['id'])}::uuid then raise exception 'Fictional delete failure'; end if; return old; end $$;
+          create trigger test_block_delete before delete on public.documents for each row execute function public.test_block_delete();""")
+        try:
+            self.run_sql(self.deletion_sql(target, operation), actor=ACTOR, error='P0001')
+            self.assertEqual(self.document(target['id']), target)
+            self.assertEqual(self.movement_count(target['id']), 2)
+            self.assertEqual(self.run_sql(f"select count(*) from public.document_operation_receipts where document_id={literal(target['id'])};"), '1')
+            self.assertEqual(self.run_sql(f"select count(*) from public.document_deletion_receipts where operation_id='{operation}';"), '0')
+        finally:
+            self.run_sql('drop trigger test_block_delete on public.documents; drop function public.test_block_delete();')
+
+    def test_deletion_receipt_cannot_be_read_forged_or_used_to_delete_other_history(self):
+        target = self.archived_document()
+        self.run_sql('select * from public.document_deletion_receipts;', actor=ACTOR, error='42501')
+        self.run_sql(f"insert into public.document_deletion_receipts(operation_id,document_id,actor_id,request_fingerprint,deletion_transaction) values(gen_random_uuid(),{literal(target['id'])},'{ACTOR}','fake',txid_current());", actor=ACTOR, error='42501')
+        # Even an owner-side deletion context expires once the RPC is complete;
+        # arbitrary GUC values never bypass the immutable-history trigger.
+        other = self.new_document()
+        self.run_sql(f"begin; set local request.jwt.claim.sub='{ACTOR}';" + self.deletion_sql(target) + f"delete from public.movements where document_id={literal(other['id'])}; commit;", error='P0001')
+        self.assertEqual(self.movement_count(target['id']), 2)
+        self.run_sql(f"set rastreadoc.document_deletion={literal(target['id'])}; delete from public.movements where document_id={literal(target['id'])};", error='P0001')
 
     def test_idempotency_is_independent_of_session_timezone(self):
         original = self.new_document()

@@ -278,3 +278,14 @@ h1 { color:var(--ink); letter-spacing:-.035em; }
 @media (prefers-reduced-motion:reduce) {
   *,*::before,*::after { scroll-behavior:auto !important; transition:none !important; }
 }
+
+/* Confirmación individual de eliminación en Archivados. */
+.deletion-modal { width: min(600px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; position: relative; background: #fff; border: 1px solid #E2E0DE; border-radius: 20px; padding: 30px; box-shadow: 0 20px 60px #24242824; }
+.deletion-modal h2 { margin: 8px 0 20px; padding-right: 24px; }
+.deletion-modal label { display: grid; gap: 8px; margin: 20px 0; }
+.deletion-summary { display: grid; gap: 12px; padding: 18px; background: #F5F4F3; border-radius: 12px; }
+.deletion-summary dt { font-size: .8rem; color: #66616a; }
+.deletion-summary dd { margin: 3px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.deletion-modal .notice { margin: 16px 0; }
+.deletion-modal .edit-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+@media (max-width: 600px) { .deletion-modal { padding: 22px 18px; } .deletion-modal .edit-actions > button { width: 100%; } }

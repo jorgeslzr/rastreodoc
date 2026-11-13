@@ -1,5 +1,19 @@
 # Revisión operativa de RASTREADOC
 
+## Siguiente entrega: eliminación desde Archivados
+
+El 13 de noviembre el usuario descartó la actualización entre computadoras y
+solicitó el botón de eliminación definitiva. Se preparó la eliminación individual
+del documento archivado y su historial, con confirmación escrita y verificación
+de respuestas perdidas. El expediente y otros documentos se conservan. Véanse
+el alcance, la migración y los pasos de revisión en
+[ELIMINACION_DEFINITIVA.md](ELIMINACION_DEFINITIVA.md).
+Esta entrega requiere instalar la migración primero en la base Free de pruebas
+y revisar el Preview; no está publicada en producción. La copia independiente
+de Supabase al servidor sigue sin considerarse configurada hasta aclarar qué
+respaldo revisó el usuario. El diseño en teléfonos físicos era una revisión
+adicional, diferente de las pruebas automatizadas con emulación.
+
 ## Estado al 12 de noviembre de 2026
 
 - El usuario confirmó Pro y respaldos disponibles en ambos proyectos. El 12 de
