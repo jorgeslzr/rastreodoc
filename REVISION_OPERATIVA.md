@@ -8,8 +8,11 @@ del documento archivado y su historial, con confirmación escrita y verificació
 de respuestas perdidas. El expediente y otros documentos se conservan. Véanse
 el alcance, la migración y los pasos de revisión en
 [ELIMINACION_DEFINITIVA.md](ELIMINACION_DEFINITIVA.md).
-Esta entrega requiere instalar la migración primero en la base Free de pruebas
-y revisar el Preview; no está publicada en producción. La copia independiente
+El usuario confirmó que instaló la migración en la base Free de pruebas y obtuvo
+los tres resultados `true`. En Preview confirmó la eliminación del documento
+ficticio BORRAR-PRUEBA y, después de recargar, la conservación del expediente y
+del historial de otro documento. La entrega está preparada; falta aprobar la
+instalación en la base real y la publicación en producción. La copia independiente
 de Supabase al servidor sigue sin considerarse configurada hasta aclarar qué
 respaldo revisó el usuario. El diseño en teléfonos físicos era una revisión
 adicional, diferente de las pruebas automatizadas con emulación.

@@ -74,3 +74,20 @@ de ajustar el foco del diálogo para teclado. La compilación pasó; lint no tie
 errores y conserva la advertencia anterior del `<img>` usado para el QR.
 Los recorridos existentes de alta, movimientos, reportes, QR y las nueve vistas
 continuaron pasando. Los teléfonos se verificaron por emulación de Chromium.
+
+## Revisión manual confirmada por el usuario
+
+El 13 de noviembre de 2026 el usuario confirmó la instalación en Supabase de
+pruebas y los tres resultados `true` de la consulta de revisión. Mostró el diálogo
+en Preview para **AVISO PREVENTIVO — BORRAR-PRUEBA**, del expediente ficticio
+**PRUEBA-ELIMINAR.** (con punto final en la captura).
+
+Se aclaró que el botón requiere escribir exactamente `ELIMINAR`; no se cambió
+esa confirmación. El usuario confirmó después el mensaje de eliminación y la
+desaparición del documento de Archivados. Tras la instrucción de recargar,
+confirmó que el expediente seguía disponible y que otro documento conservaba
+su historial. La aplicación se revisó con datos ficticios del proyecto de pruebas.
+
+La entrega queda preparada para producción. La instalación en el proyecto real
+y la publicación todavía requieren aprobación específica del usuario. No se ha
+aplicado SQL al proyecto real ni publicado esta entrega en `main`.
