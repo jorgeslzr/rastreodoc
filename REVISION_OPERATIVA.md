@@ -1,6 +1,6 @@
 # Revisión operativa de RASTREADOC
 
-## Siguiente entrega: eliminación desde Archivados
+## Eliminación desde Archivados: publicación autorizada
 
 El 13 de noviembre el usuario descartó la actualización entre computadoras y
 solicitó el botón de eliminación definitiva. Se preparó la eliminación individual
@@ -11,8 +11,11 @@ el alcance, la migración y los pasos de revisión en
 El usuario confirmó que instaló la migración en la base Free de pruebas y obtuvo
 los tres resultados `true`. En Preview confirmó la eliminación del documento
 ficticio BORRAR-PRUEBA y, después de recargar, la conservación del expediente y
-del historial de otro documento. La entrega está preparada; falta aprobar la
-instalación en la base real y la publicación en producción. La copia independiente
+del historial de otro documento. Después autorizó instalar y publicar la mejora
+en el sistema real y confirmó los tres resultados `true` de la instalación en
+Supabase real. El código funcional autorizado es el probado en `63b4a9a`; los
+cambios posteriores solo registran pruebas y aprobación. Se publica desde `main`
+para utilizar sus variables de producción. La copia independiente
 de Supabase al servidor sigue sin considerarse configurada hasta aclarar qué
 respaldo revisó el usuario. El diseño en teléfonos físicos era una revisión
 adicional, diferente de las pruebas automatizadas con emulación.

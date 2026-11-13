@@ -1,6 +1,7 @@
 # Eliminación individual de documentos archivados
 
-Entrega preparada el 13 de noviembre de 2026. Producción sigue en `8daad15`.
+Entrega preparada y autorizada para producción el 13 de noviembre de 2026.
+La versión anterior de producción es `8daad15`.
 La actualización entre computadoras se descartó por indicación del usuario.
 
 ## Comportamiento
@@ -88,6 +89,13 @@ desaparición del documento de Archivados. Tras la instrucción de recargar,
 confirmó que el expediente seguía disponible y que otro documento conservaba
 su historial. La aplicación se revisó con datos ficticios del proyecto de pruebas.
 
-La entrega queda preparada para producción. La instalación en el proyecto real
-y la publicación todavía requieren aprobación específica del usuario. No se ha
-aplicado SQL al proyecto real ni publicado esta entrega en `main`.
+El usuario autorizó expresamente instalar esta mejora en el sistema real y
+publicarla. Después confirmó los tres resultados `true` al ejecutar en el
+proyecto real `vmmafjnhtluinmmjyigv` el archivo con la misma migración y la
+consulta de revisión. La instalación en Supabase fue realizada por el usuario.
+
+La publicación autorizada se realiza desde `main`, con el mismo código funcional
+probado en `63b4a9a`; los cambios posteriores son documentación. La comprobación
+pública posterior debe verificar la nueva interfaz, los scripts servidos y que
+el backend siga siendo `vmmafjnhtluinmmjyigv.supabase.co`. No se promueve el
+artefacto de Preview ni se eliminan documentos reales para comprobar el despliegue.
