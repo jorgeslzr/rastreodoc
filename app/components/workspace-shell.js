@@ -20,7 +20,7 @@ function NavigationItems({ items, activeView, onNavigate }) {
   </button>);
 }
 
-export default function WorkspaceShell({ children, activeView, title, eyebrow, navigation, onNavigate, username, roleLabel, onSignOut, search, onSearch, summaries, overdueCount }) {
+export default function WorkspaceShell({ children, priorityNotice, activeView, title, eyebrow, navigation, onNavigate, username, roleLabel, onSignOut, search, onSearch, summaries, overdueCount }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const sidebar = useRef(null);
   const menuToggle = useRef(null);
@@ -96,6 +96,7 @@ export default function WorkspaceShell({ children, activeView, title, eyebrow, n
         </div>
       </header>
       <main className="page-shell" id="workspace-content">
+        {priorityNotice}
         <div className="page-heading">
           <div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1></div>
           <section className="summary-strip" aria-label="Indicadores de documentos">

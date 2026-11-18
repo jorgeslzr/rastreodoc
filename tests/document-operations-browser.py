@@ -466,6 +466,79 @@ class BrowserOperations(unittest.TestCase):
         target.update(id="dddddddd-dddd-4ddd-8ddd-dddddddddddd", label="Archivo a eliminar", archived_at="2026-11-13T02:00:00.123456Z")
         fixture.archived_documents = [target]
 
+    @staticmethod
+    def overdue_notice_fixture(fixture):
+        for index,status,agency,case in [
+            (2,'ENVIADO','REGISTRO PÚBLICO','VENCIDO-REGISTRO'),
+            (3,'REENVIADO','TESORERÍA MUNICIPAL','VENCIDO-TESORERIA'),
+            (4,'RECHAZADO','REGISTRO PÚBLICO','VENCIDO-RECHAZADO'),
+            (5,'AUTORIZADO','REGISTRO PÚBLICO','AUTORIZADO-CONSERVAR'),
+        ]:
+            document=copy.deepcopy(fixture.document)
+            document.update(id=f'aaaaaaaa-aaaa-4aaa-8aaa-{index:012d}', status=status,
+                            created_at='2026-01-01T12:00:00Z',last_movement_at='2026-01-02T12:00:00Z')
+            document['agencies']={'name':agency}
+            document['case_files']={'number':case}
+            fixture.extra_documents.append(document)
+        fixture.rows['agencies'].append({'id':'55555555-5555-4555-8555-000000000002','name':'TESORERÍA MUNICIPAL'})
+
+    def test_overdue_notice_is_first_compact_and_preserves_both_report_links_across_sizes(self):
+        for name,width,height in [('desktop',1774,1000),('laptop',1280,720),('tablet',768,1024),('phone',320,740)]:
+            with self.subTest(device=name):
+                page,fixture=self.open_app('normal',configure=self.overdue_notice_fixture,
+                                           context_options={'viewport':{'width':width,'height':height}})
+                reads=len(fixture.reads)
+                alert=page.get_by_role('alert',name='Documentos que requieren atención')
+                expect(alert).to_be_visible()
+                self.assertTrue(page.evaluate("document.querySelector('.page-shell').firstElementChild.classList.contains('overdue-alert-priority')"))
+                expect(alert.locator('strong')).to_have_text(['2','1'])
+                box=alert.bounding_box()
+                self.assertLess(box['y'],height/2)
+                self.assertLessEqual(box['y']+box['height'],page.locator('.page-heading').bounding_box()['y'])
+                self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),width+1)
+                if width>=1280:
+                    self.assertLessEqual(box['height'],110)
+                page.add_style_tag(content='nextjs-portal { display:none !important; }')
+                page.screenshot(path=f'/tmp/rastreodoc-alerta-prioritaria-{name}.png',full_page=True,animations='disabled')
+                if name=='desktop':
+                    alert.screenshot(path='/tmp/rastreodoc-alerta-prioritaria-detalle.png',animations='disabled')
+                alert.get_by_role('button',name=re.compile('Enviados vencidos')).click()
+                expect(page.locator('.reports-section').get_by_label('Seguimiento')).to_have_value('SENT_OVERDUE')
+                rows=page.locator('.report-table tbody tr')
+                expect(rows).to_have_count(2)
+                expect(page.locator('.report-table tbody')).to_contain_text('VENCIDO-REGISTRO')
+                expect(page.locator('.report-table tbody')).to_contain_text('VENCIDO-TESORERIA')
+                expect(alert).not_to_be_visible()
+                self.visual_navigate(page,'Panel')
+                expect(alert).to_be_visible()
+                alert.get_by_role('button',name=re.compile('Rechazados vencidos')).click()
+                expect(page.locator('.reports-section').get_by_label('Seguimiento')).to_have_value('REJECTED_OVERDUE')
+                expect(rows).to_have_count(1)
+                expect(rows).to_contain_text('VENCIDO-RECHAZADO')
+                self.assertEqual(len(fixture.reads),reads)
+                self.assertEqual(fixture.operations+fixture.creations+fixture.case_creations+fixture.deletions,[])
+
+    def test_overdue_notice_only_shows_existing_categories_and_excludes_archived_documents(self):
+        for category in ['none','sent','rejected']:
+            with self.subTest(category=category):
+                def configure(fixture):
+                    self.overdue_notice_fixture(fixture)
+                    archived=copy.deepcopy(fixture.extra_documents[2])
+                    archived['id']='aaaaaaaa-aaaa-4aaa-8aaa-000000000099'
+                    archived['archived_at']='2026-11-18T12:00:00Z'
+                    fixture.archived_documents=[archived]
+                    fixture.extra_documents=[document for document in fixture.extra_documents
+                        if (category=='sent' and document['status'] in ['ENVIADO','REENVIADO'])
+                        or (category=='rejected' and document['status']=='RECHAZADO')]
+                page,_=self.open_app('normal',configure=configure)
+                alert=page.get_by_role('alert',name='Documentos que requieren atención')
+                if category=='none':
+                    expect(alert).to_have_count(0)
+                    self.assertTrue(page.evaluate("document.querySelector('.page-shell').firstElementChild.classList.contains('page-heading')"))
+                else:
+                    expect(alert.get_by_role('button')).to_have_count(1)
+                    expect(alert.locator('strong')).to_have_text('2' if category=='sent' else '1')
+
     def open_deletion(self, page):
         self.visual_navigate(page, 'Archivados')
         page.get_by_role('button', name='Eliminar definitivamente', exact=True).click()

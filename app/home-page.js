@@ -1482,6 +1482,13 @@ export default function HomePage({ initialView = "panel" } = {}) {
       navigation={[["panel", "Panel"], ...(canOperate ? [["alta", "Alta"], ["boletas", "Boletas"], ["escanear", "Escanear"]] : []), ["consulta", "Buscar"], ["reportes", "Reportes"], ["archivados", "Archivados"], ...(canManageAll ? [["catalogos", "Catálogos"], ["usuarios", "Usuarios"]] : [])]}
       onNavigate={openView} username={currentUsername} roleLabel={ROLE_LABELS[currentRole]} onSignOut={() => supabase.auth.signOut()}
       search={search} onSearch={setSearch} overdueCount={overdueSentDocuments.length + overdueRejectedDocuments.length}
+      priorityNotice={activeView === "panel" && (overdueSentDocuments.length > 0 || overdueRejectedDocuments.length > 0) && <section className="overdue-alert overdue-alert-priority" role="alert" aria-label="Documentos que requieren atención">
+        <div className="overdue-alert-copy"><Icon name="bell" className="overdue-alert-icon" /><div><p className="eyebrow">ATENCIÓN</p><h3>Documentos con seguimiento vencido</h3><p>Abre los reportes para darles seguimiento.</p></div></div>
+        <div className="overdue-alert-actions">
+          {overdueSentDocuments.length > 0 && <button type="button" onClick={() => { setReportAlert("SENT_OVERDUE"); setActiveView("reportes"); }}><strong>{overdueSentDocuments.length}</strong><span>Enviados vencidos</span><small>Registro: más de 30 días · Tesorería: más de 15 días</small></button>}
+          {overdueRejectedDocuments.length > 0 && <button type="button" onClick={() => { setReportAlert("REJECTED_OVERDUE"); setActiveView("reportes"); }}><strong>{overdueRejectedDocuments.length}</strong><span>Rechazados vencidos</span><small>Más de 5 días en rechazo</small></button>}
+        </div>
+      </section>}
       summaries={[{ label: "Documentos", value: summaryCounts.documents, icon: "document" }, { label: "Autorizados", value: summaryCounts.authorized, icon: "check" }, { label: "Enviados", value: summaryCounts.sent, icon: "clock" }]}>
       {activeView === "panel" && <section className="dashboard-view">
         <div className="welcome-card">
@@ -1518,13 +1525,6 @@ export default function HomePage({ initialView = "panel" } = {}) {
             </button>
           ))}
         </section>
-        {(overdueSentDocuments.length > 0 || overdueRejectedDocuments.length > 0) && <section className="overdue-alert" role="alert" aria-label="Documentos que requieren atención">
-          <div><p className="eyebrow">ATENCIÓN</p><h3>Hay documentos que excedieron el tiempo de seguimiento</h3><p>Consulta el reporte para dar seguimiento a los documentos enviados o rechazados.</p></div>
-          <div className="overdue-alert-actions">
-            {overdueSentDocuments.length > 0 && <button onClick={() => { setReportAlert("SENT_OVERDUE"); setActiveView("reportes"); }}><strong>{overdueSentDocuments.length}</strong><span>Enviados vencidos</span><small>Registro: más de 30 días · Tesorería: más de 15 días</small></button>}
-            {overdueRejectedDocuments.length > 0 && <button onClick={() => { setReportAlert("REJECTED_OVERDUE"); setActiveView("reportes"); }}><strong>{overdueRejectedDocuments.length}</strong><span>Rechazados vencidos</span><small>Más de 5 días en rechazo</small></button>}
-          </div>
-        </section>}
         {currentRole === "admin" && <section className={`storage-card ${storageStatus.className}`} aria-label="Almacenamiento de la base de datos">
           <div className="storage-details"><p className="eyebrow">ALMACENAMIENTO</p><h3>Espacio utilizado por RASTREADOC</h3><strong>{storageError ? "No disponible" : storageUsage === null ? "Consultando…" : `${formatStorageSize(storageUsage)} de ${formatStorageSize(DATABASE_STORAGE_LIMIT_BYTES)}`}</strong>{!storageError && storageUsage !== null && <><div className="storage-meter" role="progressbar" aria-label="Porcentaje de almacenamiento utilizado" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(storagePercentage)}><span style={{ width: `${storagePercentage}%` }} /></div><p className="storage-reading"><b>{storagePercentage.toFixed(1)}% utilizado</b> · Quedan aproximadamente {formatStorageSize(Math.max(0, DATABASE_STORAGE_LIMIT_BYTES - storageUsage))}</p><p className="storage-alert">{storageStatus.message}</p></>}<p>Incluye expedientes, documentos, movimientos, usuarios y catálogos. Límite configurado: {formatStorageSize(DATABASE_STORAGE_LIMIT_BYTES)}.</p></div>
           <button className="secondary" onClick={refreshStorageUsage}>Actualizar</button>

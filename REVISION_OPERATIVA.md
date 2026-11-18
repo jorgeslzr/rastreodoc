@@ -1,5 +1,23 @@
 # Revisión operativa de RASTREADOC
 
+## Alerta de vencidos prioritaria — 18 de noviembre de 2026
+
+La alerta de seguimiento se mueve al inicio del Panel, debajo de la barra
+superior y antes del título e indicadores. Se hace más compacta, con icono y
+conteos junto a cada categoría. Conserva las reglas actuales (Registro >30 días,
+Tesorería >15 días, rechazo >5 días), datos y botones que abren sus reportes.
+Solo aparece en Panel cuando existen vencidos, sin duplicación ni espacio vacío
+cuando no los hay. La lógica de negocio previa a WorkspaceShell sigue idéntica
+contra `cb463b2`; el cambio es de presentación y posición.
+
+Se verificaron colocación visible, altura compacta, ausencia de desbordamiento,
+conteos y navegación a ambos reportes en escritorio, laptop, tablet y teléfono
+emulado; también casos con una categoría y solo documentos archivados.
+Las pruebas existentes de navegación visual y reportes continuaron pasando.
+Compilación correcta y lint sin errores, con la advertencia previa del `<img>`
+del QR. No requiere SQL ni cambios de datos o permisos.
+La entrega se prepara en Preview. Producción sigue en `cb463b2` hasta aprobación.
+
 ## Nueva identidad visual — 18 de noviembre de 2026
 
 Se preparó una actualización visual a partir del logotipo adjunto, con carbón,

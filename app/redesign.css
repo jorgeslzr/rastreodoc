@@ -315,3 +315,31 @@ h1 { color:var(--ink); letter-spacing:-.035em; }
   .notification-indicator { width:26px; }
   .topbar-account { gap:6px; }
 }
+
+/* Important follow-up stays first in the Panel, compact and actionable. */
+.overdue-alert-priority { display:grid; grid-template-columns:minmax(230px,1fr) auto; align-items:center; gap:18px; margin:0 0 22px; padding:14px 18px; border:1px solid var(--gold-hover); border-left:5px solid var(--warning); border-radius:15px; background:var(--warning-soft); box-shadow:0 4px 14px var(--shadow); }
+.overdue-alert-copy { display:flex; align-items:center; gap:12px; min-width:0; }
+.overdue-alert-icon { flex-shrink:0; width:36px; height:36px; padding:7px; border:1px solid var(--gold-hover); border-radius:10px; background:var(--surface-hover); color:var(--warning); }
+.overdue-alert-priority .eyebrow { margin:0 0 4px; color:var(--warning); font-size:10px; letter-spacing:.17em; }
+.overdue-alert-priority h3 { margin:0; color:var(--warning); font-size:16px; line-height:1.25; }
+.overdue-alert-priority p:not(.eyebrow) { margin:4px 0 0; color:var(--muted); font-size:12px; line-height:1.4; }
+.overdue-alert-priority .overdue-alert-actions { display:flex; flex-direction:row; gap:10px; width:auto; }
+.overdue-alert-priority .overdue-alert-actions button { display:grid; grid-template-columns:auto minmax(0,1fr); grid-template-rows:auto auto; align-items:center; gap:3px 10px; min-width:0; min-height:60px; padding:10px 13px; border-radius:11px; text-align:left; }
+.overdue-alert-priority .overdue-alert-actions strong { grid-row:1 / 3; min-width:2ch; font-size:27px; line-height:1; font-variant-numeric:tabular-nums; }
+.overdue-alert-priority .overdue-alert-actions span { min-width:0; margin:0; font-size:13px; line-height:1.2; overflow-wrap:anywhere; }
+.overdue-alert-priority .overdue-alert-actions small { min-width:0; margin:0; font-size:11px; line-height:1.35; overflow-wrap:anywhere; }
+@media (max-width:1100px) {
+  .overdue-alert-priority { grid-template-columns:1fr; gap:12px; padding:14px 16px; }
+  .overdue-alert-priority .overdue-alert-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); width:100%; }
+}
+@media (max-width:600px) {
+  .overdue-alert-priority { margin-bottom:18px; padding:13px 12px; border-radius:13px; }
+  .overdue-alert-copy { gap:9px; }
+  .overdue-alert-icon { width:32px; height:32px; padding:6px; }
+  .overdue-alert-priority h3 { font-size:15px; }
+  .overdue-alert-priority p:not(.eyebrow) { font-size:11px; }
+  .overdue-alert-priority .overdue-alert-actions { gap:8px; }
+  .overdue-alert-priority .overdue-alert-actions button { gap:3px 7px; padding:10px 8px; }
+  .overdue-alert-priority .overdue-alert-actions strong { font-size:24px; }
+  .overdue-alert-priority .overdue-alert-actions span { font-size:12px; }
+}
