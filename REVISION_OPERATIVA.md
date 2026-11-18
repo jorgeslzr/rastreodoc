@@ -1,5 +1,29 @@
 # Revisión operativa de RASTREADOC
 
+## Filtro por dependencia en Reportes — 18 de noviembre de 2026
+
+Se agregó el selector **Dependencia**, con **Todas** como valor inicial y los
+nombres del catálogo existente, incluidos nombres anteriores que aún puedan
+estar asociados a documentos. Se combina con los filtros actuales y actualiza
+el conteo y las filas sin nuevas consultas. Excel, PDF e impresión usan la misma
+selección; PDF e impresión también identifican la dependencia en el encabezado.
+No requiere migración ni cambios en Supabase, permisos o QR.
+
+Validación: siete pruebas de navegador correctas, incluidas la combinación con
+otros filtros, ausencia de resultados, restablecer Todas, conservación al cambiar
+de sección, exportación e impresión, escritorio y móvil/tablet emulados.
+Compilación correcta. Lint sin errores, con la advertencia anterior del `<img>` del QR.
+La entrega se prepara en Preview para revisión; producción sigue en `fcfaf6e`.
+
+## Revisión de uso en Android
+
+El usuario confirmó en un Android real el menú y Buscar, la consulta e historial,
+los campos y botones de Alta sin guardar cambios, la vista de QR y Reportes en
+vertical y horizontal. La revisión en iPhone y la copia independiente de Supabase
+al servidor quedaron pendientes por indicación del usuario. El usuario confirmó
+que RASTREADOC no recibe archivos adjuntos: genera QR desde sus registros, por lo
+que no necesita una copia separada de objetos Storage para esta aplicación.
+
 ## Eliminación desde Archivados: publicación autorizada
 
 El 13 de noviembre el usuario descartó la actualización entre computadoras y

@@ -832,6 +832,122 @@ class BrowserOperations(unittest.TestCase):
         page.get_by_role("navigation", name="Menú principal").get_by_role("button", name="Reportes", exact=True).click()
         expect(page.get_by_text("Fechas y horas de la Ciudad de México.", exact=True)).to_be_visible()
 
+    @staticmethod
+    def report_agency_fixture(fixture):
+        BrowserOperations.office_date_fixture(fixture)
+        second = fixture.extra_documents[0]
+        second['agencies'] = {'name': 'TESORERÍA MUNICIPAL'}
+        second['status'] = 'ENVIADO'
+        third = copy.deepcopy(second)
+        third.update(id='aaaaaaaa-aaaa-4aaa-8aaa-000000000003', status='AUTORIZADO')
+        third['case_files'] = {'number': 'FECHA-C'}
+        third['document_types'] = {'name': 'ISAI'}
+        historical = copy.deepcopy(second)
+        historical.update(id='aaaaaaaa-aaaa-4aaa-8aaa-000000000004', status='EN_OFICINA')
+        historical['case_files'] = {'number': 'FECHA-D'}
+        historical['agencies'] = {'name': 'RESISTO PÚBLICO & ARCHIVO <CENTRO>'}
+        fixture.extra_documents.extend([third, historical])
+        fixture.rows['agencies'].extend([
+            {'id': '55555555-5555-4555-8555-000000000002', 'name': 'TESORERÍA MUNICIPAL'},
+            {'id': '55555555-5555-4555-8555-000000000003', 'name': historical['agencies']['name']},
+            {'id': '55555555-5555-4555-8555-000000000004', 'name': 'DEPENDENCIA SIN DOCUMENTOS'},
+        ])
+        fixture.rows['case_files'].extend([
+            {'id': '33333333-3333-4333-8333-000000000003', 'number': 'FECHA-C'},
+            {'id': '33333333-3333-4333-8333-000000000004', 'number': 'FECHA-D'},
+        ])
+
+    def test_report_agency_combines_filters_includes_older_catalog_names_and_resets_without_requests(self):
+        page, fixture = self.open_app('normal', configure=self.report_agency_fixture)
+        self.open_report(page)
+        reads = len(fixture.reads)
+        agency = page.get_by_label('Dependencia')
+        rows = page.locator('.report-table tbody tr')
+        expect(agency).to_have_value('')
+        expect(rows).to_have_count(4)
+        agency.select_option('TESORERÍA MUNICIPAL')
+        expect(rows).to_have_count(2)
+        expect(page.locator('.reports-heading strong')).to_have_text('2 documentos')
+        page.get_by_label('Tipo de documento').select_option('ISAI')
+        expect(rows).to_have_count(1)
+        expect(rows).to_contain_text('FECHA-C')
+        page.get_by_label('Estatus').select_option('ENVIADO')
+        expect(rows).to_contain_text('No hay documentos que coincidan con estos filtros.')
+        page.get_by_label('Estatus').select_option('AUTORIZADO')
+        page.get_by_label('Desde', exact=True).fill('2026-11-12')
+        page.get_by_label('Hasta', exact=True).fill('2026-11-12')
+        page.get_by_label('Expediente', exact=True).fill('FECHA-C')
+        page.get_by_label('Abogado').select_option(LAWYER_ID)
+        page.get_by_label('Auxiliar').select_option(AUXILIARY_ID)
+        expect(rows).to_have_count(1)
+        expect(rows).to_contain_text('FECHA-C')
+        agency.select_option('REGISTRO PÚBLICO')
+        expect(rows).to_contain_text('No hay documentos que coincidan con estos filtros.')
+        for label in ['Tipo de documento', 'Estatus', 'Abogado', 'Auxiliar']:
+            page.get_by_label(label).select_option('')
+        for label in ['Desde', 'Hasta', 'Expediente']:
+            page.get_by_label(label, exact=True).fill('')
+        agency.select_option('RESISTO PÚBLICO & ARCHIVO <CENTRO>')
+        expect(rows).to_have_count(1)
+        expect(rows).to_contain_text('FECHA-D')
+        agency.select_option('DEPENDENCIA SIN DOCUMENTOS')
+        expect(page.locator('.reports-heading strong')).to_have_text('0 documentos')
+        expect(rows).to_contain_text('No hay documentos que coincidan con estos filtros.')
+        agency.select_option('')
+        expect(rows).to_have_count(4)
+        agency.select_option('TESORERÍA MUNICIPAL')
+        self.visual_navigate(page, 'Buscar')
+        self.visual_navigate(page, 'Reportes')
+        expect(agency).to_have_value('TESORERÍA MUNICIPAL')
+        expect(rows).to_have_count(2)
+        self.assertEqual(len(fixture.reads), reads)
+        self.assertEqual(fixture.operations + fixture.creations + fixture.case_creations + fixture.deletions, [])
+
+    def test_report_agency_excel_pdf_and_print_use_same_rows_and_show_escaped_filter(self):
+        page, _ = self.open_app('normal', configure=self.report_agency_fixture)
+        self.open_report(page)
+        agency_name = 'RESISTO PÚBLICO & ARCHIVO <CENTRO>'
+        page.get_by_label('Dependencia').select_option(agency_name)
+        with page.expect_download() as downloaded:
+            page.get_by_role('button', name='Exportar a Excel', exact=True).click()
+        records = list(csv.reader(StringIO(Path(downloaded.value.path()).read_text(encoding='utf-8-sig'))))
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[1][2], 'FECHA-D')
+        self.assertEqual(records[1][9], agency_name)
+        with page.expect_popup() as viewed:
+            page.get_by_role('button', name='Ver PDF', exact=True).click()
+        popup = viewed.value
+        expect(popup.locator('header')).to_contain_text('Dependencia: ' + agency_name)
+        expect(popup.locator('tbody tr')).to_have_count(1)
+        expect(popup.locator('tbody tr td').nth(2)).to_have_text('FECHA-D')
+        expect(popup.locator('centro')).to_have_count(0)
+        self.spy_print(page)
+        with page.expect_popup() as printed:
+            page.get_by_role('button', name='Imprimir', exact=True).click()
+        printing = printed.value
+        printing.wait_for_function('()=>window.__printCalls?.length===1')
+        expect(printing.locator('header')).to_contain_text('Dependencia: ' + agency_name)
+        expect(printing.locator('tbody tr')).to_have_count(1)
+        expect(printing.locator('tbody tr td').nth(2)).to_have_text('FECHA-D')
+
+    def test_report_agency_filter_fits_phone_and_tablet_and_works_for_consulta_role(self):
+        for name, width, height in [('android', 412, 915), ('tablet', 768, 1024)]:
+            with self.subTest(device=name):
+                def configure(fixture):
+                    self.report_agency_fixture(fixture)
+                    fixture.rows['profiles'][0]['role'] = 'consulta'
+                page, _ = self.open_app('normal', configure=configure, context_options={'viewport': {'width': width, 'height': height}, 'is_mobile': True, 'has_touch': True})
+                self.visual_navigate(page, 'Reportes')
+                agency = page.get_by_label('Dependencia')
+                agency.select_option('TESORERÍA MUNICIPAL')
+                expect(page.locator('.report-table tbody tr')).to_have_count(2)
+                self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), width + 1)
+                box = agency.bounding_box()
+                self.assertGreaterEqual(box['x'], 0)
+                self.assertLessEqual(box['x'] + box['width'], width)
+                page.add_style_tag(content='nextjs-portal { display:none !important; }')
+                page.screenshot(path=f'/tmp/rastreodoc-filtro-dependencia-{name}.png', full_page=True, animations='disabled')
+
     def test_report_days_follow_mexico_midnight_in_utc_and_other_computer_zones(self):
         for zone in ["UTC", "America/Los_Angeles"]:
             with self.subTest(timezone=zone):

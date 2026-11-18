@@ -320,6 +320,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const [reportMovements, setReportMovements] = useState([]);
   const [reportStatus, setReportStatus] = useState("");
   const [reportType, setReportType] = useState("");
+  const [reportAgency, setReportAgency] = useState("");
   const [reportStart, setReportStart] = useState("");
   const [reportEnd, setReportEnd] = useState("");
   const [reportCase, setReportCase] = useState("");
@@ -1336,7 +1337,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     if (!popup) return;
     const rows = filteredReportDocuments.map((movement) => `<tr><td>${escapeHtml(movement.date_label)}</td><td>${elapsedDays(movement.occurred_at, currentTime)}</td><td>${escapeHtml(movement.documents?.case_files?.number)}</td><td>${escapeHtml(movement.documents?.auxiliaries?.name || "—")}</td><td>${escapeHtml(movement.documents ? formatDocumentName(movement.documents) : "")}</td><td>${escapeHtml(deedColumn(movement.documents, "folio_forma") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "municipality") || "—")}</td><td>${escapeHtml(deedColumn(movement.documents, "cadastral_file_number") || "—")}</td><td>${escapeHtml(movement.documents?.lawyers?.name || "—")}</td><td>${escapeHtml(movement.documents?.agencies?.name)}</td><td>${escapeHtml(formatStatus(movement.documents?.status))}</td><td>${escapeHtml(movement.receipt_number || "—")}</td><td class="signature-line"></td><td class="signature-line"></td></tr>`).join("");
     const alertLabel = reportAlert === "SENT_OVERDUE" ? "Enviados vencidos" : reportAlert === "REJECTED_OVERDUE" ? "Rechazados vencidos" : "";
-    const filters = [alertLabel && `Seguimiento: ${alertLabel}`, reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`, reportLawyer && `Abogado: ${lawyers.find(({ id }) => id === reportLawyer)?.name}`, reportAuxiliary && `Auxiliar: ${auxiliaries.find(({ id }) => id === reportAuxiliary)?.name}`].filter(Boolean).join(" · ") || "Todos los movimientos";
+    const filters = [alertLabel && `Seguimiento: ${alertLabel}`, reportCase && `Expediente: ${reportCase}`, reportStart && `Desde: ${reportStart}`, reportEnd && `Hasta: ${reportEnd}`, reportStatus && `Estatus: ${formatStatus(reportStatus)}`, reportType && `Tipo: ${reportType}`, reportAgency && `Dependencia: ${reportAgency}`, reportLawyer && `Abogado: ${lawyers.find(({ id }) => id === reportLawyer)?.name}`, reportAuxiliary && `Auxiliar: ${auxiliaries.find(({ id }) => id === reportAuxiliary)?.name}`].filter(Boolean).join(" · ") || "Todos los movimientos";
     popup.document.write(`<!doctype html><html lang="es"><head><title>Reporte RASTREADOC</title><style>@page{size:landscape;margin:8mm}body{font-family:Arial;margin:32px;color:#17232d}header{border-bottom:3px solid #18324a;margin-bottom:24px;padding-bottom:14px}h1{margin:0;color:#18324a}p{color:#667580}.toolbar{margin-bottom:20px}.toolbar button{padding:10px 18px;border:0;border-radius:6px;background:#246b8e;color:white;font-weight:bold}table{width:100%;border-collapse:collapse;font-size:9px}th,td{padding:7px 5px;border-bottom:1px solid #dce3e8;text-align:left}th{background:#f4f6f7}.signature-line{min-width:75px;border-bottom:1px solid #17232d}@media print{.toolbar{display:none}body{margin:8mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Guardar como PDF / Imprimir</button></div><header><h1>RASTREADOC</h1><p>Reporte de documentos actuales — ${escapeHtml(filters)}</p><p>Fechas y horas de la Ciudad de México.</p><strong>${filteredReportDocuments.length} documentos</strong></header><table><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Auxiliar</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th><th>Quién recibe</th><th>Firma</th></tr></thead><tbody>${rows || '<tr><td colspan="14">No hay documentos para mostrar.</td></tr>'}</tbody></table>${autoPrint ? '<script>window.onload=()=>window.print()</script>' : ""}</body></html>`);
     popup.document.close();
   }
@@ -1428,6 +1429,9 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const canManageUsers = canManageAll;
   const availableDocumentTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...documentTypes.map(({ name }) => name).filter((name) => !["PREPRE", "REGISTRO"].includes(name.toLocaleUpperCase("es-MX")))])].sort((a, b) => a.localeCompare(b, "es"));
   const availableAgencies = [...new Set([...DEFAULT_AGENCIES, ...agencies.map(({ name }) => name)].filter((name) => !isObsoleteAgencyName(name)))].sort((a, b) => a.localeCompare(b, "es"));
+  // Reporting must include every catalog agency, even older names unavailable
+  // for new captures, so existing documents can still be filtered accurately.
+  const reportAgencyNames = agencies.map(({ name }) => name).sort((a, b) => a.localeCompare(b, "es"));
     const overdueSentDocuments = documents.filter((document) => overdueCategory(document, currentTime) === "SENT_OVERDUE");
   const overdueRejectedDocuments = documents.filter((document) => overdueCategory(document, currentTime) === "REJECTED_OVERDUE");
   // El reporte y el panel deben partir de la misma lista de documentos actuales.
@@ -1439,6 +1443,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
     return matchesReportDateRange(movement.date_key, reportStart, reportEnd)
       && (!reportStatus || movement.documents.status === reportStatus)
       && (!reportType || movement.documents?.document_types?.name === reportType)
+      && (!reportAgency || movement.documents?.agencies?.name === reportAgency)
       && (!reportLawyer || movement.documents?.lawyer_id === reportLawyer)
       && (!reportAuxiliary || movement.documents?.auxiliary_id === reportAuxiliary)
       && (!reportAlert || overdueCategory(movement.documents, currentTime) === reportAlert)
@@ -1680,6 +1685,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
           <label>Hasta<input type="date" value={reportEnd} onChange={(event) => setReportEnd(event.target.value)} /></label>
           <label>Estatus<select value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}><option value="">Todos</option>{statusCards.map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select></label>
           <label>Tipo de documento<select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">Todos</option>{availableDocumentTypes.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+          <label>Dependencia<select value={reportAgency} onChange={(event) => setReportAgency(event.target.value)}><option value="">Todas</option>{reportAgencyNames.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
           <label>Abogado<select value={reportLawyer} onChange={(event) => setReportLawyer(event.target.value)}><option value="">Todos</option>{lawyers.map((lawyer) => <option key={lawyer.id} value={lawyer.id}>{lawyer.name}</option>)}</select></label>
           <label>Auxiliar<select value={reportAuxiliary} onChange={(event) => setReportAuxiliary(event.target.value)}><option value="">Todos</option>{auxiliaries.map((auxiliaryRecord) => <option key={auxiliaryRecord.id} value={auxiliaryRecord.id}>{auxiliaryRecord.name}</option>)}</select></label>
           <label>Ordenar por días<select value={reportDaySort} onChange={(event) => setReportDaySort(event.target.value)}><option value="">Orden original</option><option value="desc">Más días primero</option><option value="asc">Menos días primero</option></select></label>
