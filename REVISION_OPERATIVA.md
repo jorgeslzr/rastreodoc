@@ -13,7 +13,10 @@ Validación: siete pruebas de navegador correctas, incluidas la combinación con
 otros filtros, ausencia de resultados, restablecer Todas, conservación al cambiar
 de sección, exportación e impresión, escritorio y móvil/tablet emulados.
 Compilación correcta. Lint sin errores, con la advertencia anterior del `<img>` del QR.
-La entrega se prepara en Preview para revisión; producción sigue en `fcfaf6e`.
+El usuario autorizó expresamente publicar esta entrega el 18 de noviembre.
+El código funcional aprobado es el probado en `40ed11e`; este registro posterior
+solo documenta la autorización. Se publica desde `main` para usar las variables
+reales de producción, sin promover el artefacto de Preview ni ejecutar SQL.
 
 ## Revisión de uso en Android
 
