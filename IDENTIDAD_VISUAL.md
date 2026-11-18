@@ -65,6 +65,12 @@ La publicación en el sistema real requiere la aprobación del usuario sobre est
 entrega. Se hará desde `main` para reconstruir con las variables reales, sin
 promover el artefacto de Preview conectado a la base Free. No requiere SQL.
 
+El usuario autorizó expresamente la publicación de esta identidad el 18 de
+noviembre de 2026. La versión aprobada y probada es `b24c529`; la documentación
+posterior registra esa autorización sin modificar el diseño ni sus funciones.
+La comprobación posterior al despliegue debe verificar los scripts públicos,
+el backend real, la paleta compilada y el archivo exacto del logotipo.
+
 ## Validación completada
 
 - 74 pruebas de JavaScript y 57 de navegador correctas: 131 en total.

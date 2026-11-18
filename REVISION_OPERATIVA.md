@@ -10,7 +10,10 @@ archivos, el alcance y la restauración en [IDENTIDAD_VISUAL.md](IDENTIDAD_VISUA
 Pasaron 74 pruebas de JavaScript y 57 de navegador; compilación correcta y lint
 sin errores. Se verificaron el logotipo, contraste, navegación compacta, nueve
 secciones y los flujos existentes con datos ficticios. No se ejecutó SQL.
-La entrega se revisa primero en Preview; producción sigue en `b8fdc86`.
+El usuario autorizó expresamente publicar esta identidad el 18 de noviembre.
+El código funcional y visual aprobado es `b24c529`; los cambios posteriores
+solo registran la autorización. Se publica desde `main` con las variables reales,
+conservando la etiqueta y el archivo de restauración del diseño anterior.
 
 ## Filtro por dependencia en Reportes — 18 de noviembre de 2026
 
