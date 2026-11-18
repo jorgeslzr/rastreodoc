@@ -1,0 +1,39 @@
+/* RASTREADOC identity: the palette and its accessible/semantic companions live here. */
+:root {
+  --carbon:#202020;
+  --graphite:#303033;
+  --gold:#BE9B68;
+  --gold-hover:#D7BA8B;
+  --ivory:#F8F6F2;
+  --white:#FFFFFF;
+  --background:var(--ivory);
+  --ink:var(--carbon);
+  --navy:var(--graphite);
+  --blue:var(--gold);
+  --gold-ink:#76552B;
+  --muted:#6B6862;
+  --line:#E3DED6;
+  --surface-muted:#F3F0E9;
+  --surface-hover:#F2E8D8;
+  --input-surface:#FFFEFC;
+  --input-disabled:#EEEAE3;
+  --focus-ring:rgba(190,155,104,.24);
+  --shadow:rgba(32,32,32,.065);
+  --dialog-shadow:0 20px 60px rgba(32,32,32,.14);
+  --on-dark-muted:rgba(248,246,242,.68);
+  --success:#246341;
+  --success-soft:#EDF5EF;
+  --success-border:#BDD4C4;
+  --danger:#A13436;
+  --danger-hover:#81272A;
+  --danger-soft:#FBEFEE;
+  --danger-border:#E8C6C4;
+  --info:#345E7A;
+  --info-soft:#EDF2F7;
+  --warning:#805C25;
+  --warning-soft:#FAF1DE;
+  --received:#595A60;
+  --received-soft:#F0F0EF;
+  --sidebar-width:272px;
+  --card-shadow:0 8px 24px var(--shadow);
+}

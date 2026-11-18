@@ -1,5 +1,17 @@
 # Revisión operativa de RASTREADOC
 
+## Nueva identidad visual — 18 de noviembre de 2026
+
+Se preparó una actualización visual a partir del logotipo adjunto, con carbón,
+grafito, dorado y marfil. Antes de modificar archivos se guardó la etiqueta remota
+`respaldo/antes-identidad-2026-11-18` sobre `b8fdc86` y un archivo con el código
+anterior. Se centraliza la paleta y se conserva la lógica existente; véanse los
+archivos, el alcance y la restauración en [IDENTIDAD_VISUAL.md](IDENTIDAD_VISUAL.md).
+Pasaron 74 pruebas de JavaScript y 57 de navegador; compilación correcta y lint
+sin errores. Se verificaron el logotipo, contraste, navegación compacta, nueve
+secciones y los flujos existentes con datos ficticios. No se ejecutó SQL.
+La entrega se revisa primero en Preview; producción sigue en `b8fdc86`.
+
 ## Filtro por dependencia en Reportes — 18 de noviembre de 2026
 
 Se agregó el selector **Dependencia**, con **Todas** como valor inicial y los

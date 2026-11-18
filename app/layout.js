@@ -1,4 +1,5 @@
 import "./globals.css";
+import "./theme.css";
 import "./redesign.css";
 
 export const metadata = {

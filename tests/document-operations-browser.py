@@ -590,7 +590,10 @@ class BrowserOperations(unittest.TestCase):
         page.add_style_tag(content="nextjs-portal { display:none !important; }")
         expect(page.locator(".summary-value")).to_have_text(["3", "1", "1"])
         expect(page.locator(".notification-count")).to_have_text("1")
-        expect(page.locator(".brand-mark")).to_have_count(1)
+        expect(page.locator(".app-sidebar .brand-lockup")).to_be_visible()
+        expect(page.locator(".app-sidebar .brand-mark")).not_to_be_visible()
+        expect(page.locator(".topbar-brand")).not_to_be_visible()
+        page.wait_for_function("()=>document.querySelector('.app-sidebar .brand-lockup img')?.naturalWidth>0")
         sections = {
             "Panel": ("panel", ".dashboard-view"), "Alta": ("alta", ".workspace-grid"),
             "Boletas": ("boletas", ".receipt-section"), "Escanear": ("escanear", ".scanner-section"),
@@ -643,6 +646,70 @@ class BrowserOperations(unittest.TestCase):
                 page, _ = self.open_app("normal", configure=profile)
                 for navigation in ["Menú principal", "Accesos de sección"]:
                     expect(page.get_by_role("navigation", name=navigation).get_by_role("button")).to_have_text(expected)
+
+    def test_identity_login_uses_new_logo_and_keeps_light_work_surface_and_gold_button_contrast(self):
+        page, _ = self.open_login('normal')
+        expect(page.get_by_role('button',name='Ingresar',exact=True)).to_be_visible()
+        expect(page.locator('.site-header .brand-lockup')).to_be_visible()
+        page.wait_for_function("()=>document.querySelector('.site-header .brand-lockup img')?.naturalWidth>0")
+        colors = page.evaluate("""()=>{
+          const style=getComputedStyle(document.documentElement);
+          const button=getComputedStyle(document.querySelector('.login-panel button[type=submit]'));
+          return {palette:['--carbon','--graphite','--gold','--gold-hover','--ivory'].map(x=>style.getPropertyValue(x).trim().toUpperCase()),
+            background:getComputedStyle(document.body).backgroundColor,
+            button:button.backgroundColor, text:button.color};
+        }""")
+        self.assertEqual(colors['palette'], ['#202020','#303033','#BE9B68','#D7BA8B','#F8F6F2'])
+        self.assertEqual(colors['background'], 'rgb(248, 246, 242)')
+        self.assertEqual(colors['button'], 'rgb(190, 155, 104)')
+        self.assertEqual(colors['text'], 'rgb(32, 32, 32)')
+        def luminance(channels):
+            values = [v / 255 for v in channels]
+            values = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in values]
+            return sum(v * weight for v,weight in zip(values,[.2126,.7152,.0722]))
+        contrast = (luminance([190,155,104])+.05)/(luminance([32,32,32])+.05)
+        self.assertGreaterEqual(contrast,4.5)
+        page.add_style_tag(content='nextjs-portal { display:none !important; }')
+        page.screenshot(path='/tmp/rastreodoc-identidad-login.png', full_page=True, animations='disabled')
+
+    def test_identity_compact_rail_keeps_navigation_names_and_form_drafts_when_rotating(self):
+        page, fixture = self.open_app('normal', context_options={'viewport':{'width':1024,'height':768}})
+        expect(page.locator('.app-sidebar .brand-mark')).to_be_visible()
+        expect(page.locator('.app-sidebar .brand-lockup')).not_to_be_visible()
+        self.assertEqual(page.locator('.app-sidebar').bounding_box()['width'],88)
+        for label in ['Panel','Alta','Boletas','Escanear','Buscar','Reportes','Archivados','Catálogos','Usuarios']:
+            self.visual_navigate(page,label)
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),1025)
+        self.visual_navigate(page,'Alta')
+        page.get_by_label('Número de expediente',exact=True).fill('BORRADOR-IDENTIDAD')
+        page.set_viewport_size({'width':768,'height':1024})
+        expect(page.locator('.topbar-brand .brand-mark')).to_be_visible()
+        self.visual_navigate(page,'Reportes')
+        page.set_viewport_size({'width':1024,'height':768})
+        expect(page.locator('.app-sidebar .brand-mark')).to_be_visible()
+        self.visual_navigate(page,'Alta')
+        expect(page.get_by_label('Número de expediente',exact=True)).to_have_value('BORRADOR-IDENTIDAD')
+        page.add_style_tag(content='nextjs-portal { display:none !important; }')
+        page.screenshot(path='/tmp/rastreodoc-identidad-tablet-horizontal.png',full_page=True,animations='disabled')
+        self.assertEqual(fixture.creations+fixture.case_creations+fixture.operations+fixture.deletions,[])
+
+    def test_identity_small_phone_logo_and_status_colors_remain_accessible(self):
+        page, _ = self.open_app('normal',configure=self.visual_fixture,context_options={'viewport':{'width':320,'height':740},'is_mobile':True,'has_touch':True})
+        expect(page.locator('.topbar-brand .brand-mark')).to_be_visible()
+        self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),321)
+        self.visual_navigate(page,'Buscar')
+        rows=page.locator('.document-row[data-status]')
+        self.assertEqual(rows.count(),3)
+        colors=rows.evaluate_all('rows=>rows.map(row=>getComputedStyle(row).borderLeftColor)')
+        self.assertEqual(len(set(colors)),3)
+        self.visual_navigate(page,'Reportes')
+        expect(page.locator('.document-status')).to_have_count(3)
+        self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),321)
+        page.get_by_role('button',name='Abrir menú de navegación',exact=True).click()
+        expect(page.locator('.app-sidebar .brand-lockup')).to_be_visible()
+        expect(page.locator('.topbar-brand')).not_to_be_visible()
+        page.add_style_tag(content='nextjs-portal { display:none !important; }')
+        page.screenshot(path='/tmp/rastreodoc-identidad-telefono-menu.png',full_page=True,animations='disabled')
 
     def test_visual_top_search_reuses_the_existing_filter_and_preserves_it_between_views(self):
         page, fixture = self.open_app("normal")

@@ -1513,7 +1513,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
         </section>
         <section className="dashboard-cards" aria-label="Resumen de documentos">
           {statusCards.map(([status, label]) => (
-            <button className={`dashboard-card ${statusFilter === status ? "active" : ""}`} key={status} onClick={() => { setStatusFilter(status); setActiveView("consulta"); }}>
+            <button className={`dashboard-card ${statusFilter === status ? "active" : ""}`} data-status={status} key={status} onClick={() => { setStatusFilter(status); setActiveView("consulta"); }}>
               <strong>{documents.filter((document) => document.status === status).length}</strong><span>{label}</span>
             </button>
           ))}
@@ -1629,7 +1629,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
               <div><span>Expediente</span><strong>{scannedDocument.case_files.number}</strong></div>
               <div><span>Documento</span><strong>{formatDocumentName(scannedDocument)}</strong></div>
               <div><span>Dependencia</span><strong>{scannedDocument.agencies.name}</strong></div>
-              <div><span>Estatus actual</span><strong className="status-pill">{formatStatus(scannedDocument.status)}</strong></div>
+              <div><span>Estatus actual</span><strong className="status-pill" data-status={scannedDocument.status}>{formatStatus(scannedDocument.status)}</strong></div>
               <div><span>Último movimiento</span><strong>{formatOfficeDateTime(scannedDocument.last_movement_at)}</strong></div>
               {isOutsideOffice(scannedDocument.status) && <div><span>Tiempo fuera</span><strong>{formatTimeOutside(scannedDocument.last_movement_at, currentTime)}</strong></div>}
             </div>
@@ -1664,7 +1664,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
         {filteredDocuments.length === 0 ? <p className="empty-state">No hay documentos que coincidan con la búsqueda.</p> : (
           <div className="documents-list">
             {filteredDocuments.map((document) => (
-              <article className="document-row" key={document.id}>
+              <article className="document-row" data-status={document.status} key={document.id}>
                 <div className="document-row-main">{document.status === "EN_OFICINA" && <label className="qr-select"><input type="checkbox" checked={selectedQrIds.includes(document.id)} onChange={() => toggleQrSelection(document.id)} /> QR</label>}<div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span>{["EN_OFICINA", "RECHAZADO", "ENVIADO", "REENVIADO"].includes(document.status) && <span className="time-outside">{statusTimeLabel(document.status)}: {formatTimeOutside(document.last_movement_at, currentTime)}</span>}</div></div>
                 <div className="row-actions"><button onClick={() => setCasePreview(document.case_files.number)}><Icon name="document" />Ver expediente</button>{canOperate && document.status === "RECHAZADO" && <button onClick={() => markRejectedDocumentReady(document)} disabled={documentSaveBlocked}>Listo para enviar</button>}{canOperate && document.status !== "RECHAZADO" && <button onClick={() => prepareSend(document)}><Icon name="send" />Registrar envío</button>}{canManageAll && <button className="secondary" onClick={() => prepareCorrection(document)}><Icon name="edit" />Editar</button>}<button className="secondary" onClick={() => showHistory(document)} disabled={busy}><Icon name="history" />Historial</button><button className="secondary" onClick={() => showQr(document)}><Icon name="qr" />Ver QR</button>{canManageAll && <button className="archive-button" onClick={() => archiveDocument(document)}><Icon name="archive" />Archivar</button>}</div>
               </article>
@@ -1691,7 +1691,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
           <label>Ordenar por días<select value={reportDaySort} onChange={(event) => setReportDaySort(event.target.value)}><option value="">Orden original</option><option value="desc">Más días primero</option><option value="asc">Menos días primero</option></select></label>
         </div>
         <div className="report-table-wrap"><table className="report-table"><thead><tr><th>Último movimiento</th><th>Días en estatus</th><th>Expediente</th><th>Auxiliar</th><th>Documento</th><th>Folio forma</th><th>Municipio</th><th>No. de Exp. Catastral</th><th>Abogado</th><th>Dependencia</th><th>Estatus actual</th><th>Número de boleta</th></tr></thead><tbody>
-          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{movement.date_label}</td><td><strong>{elapsedDays(movement.occurred_at, currentTime)}</strong></td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents?.auxiliaries?.name || "—"}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{deedColumn(movement.documents, "folio_forma") || "—"}</td><td>{deedColumn(movement.documents, "municipality") || "—"}</td><td>{deedColumn(movement.documents, "cadastral_file_number") || "—"}</td><td>{movement.documents?.lawyers?.name || "—"}</td><td>{movement.documents?.agencies?.name}</td><td><strong>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
+          {filteredReportDocuments.map((movement) => <tr key={movement.id}><td>{movement.date_label}</td><td><strong>{elapsedDays(movement.occurred_at, currentTime)}</strong></td><td>{movement.documents?.case_files?.number}</td><td>{movement.documents?.auxiliaries?.name || "—"}</td><td>{movement.documents ? formatDocumentName(movement.documents) : ""}</td><td>{deedColumn(movement.documents, "folio_forma") || "—"}</td><td>{deedColumn(movement.documents, "municipality") || "—"}</td><td>{deedColumn(movement.documents, "cadastral_file_number") || "—"}</td><td>{movement.documents?.lawyers?.name || "—"}</td><td>{movement.documents?.agencies?.name}</td><td><strong className="document-status" data-status={movement.documents?.status}>{formatStatus(movement.documents?.status)}</strong></td><td>{movement.receipt_number || "—"}</td></tr>)}
           {filteredReportDocuments.length === 0 && <tr><td colSpan="12">{reportRangeError ? "Revisa el rango de fechas." : "No hay documentos que coincidan con estos filtros."}</td></tr>}
         </tbody></table></div>
       </section>}
@@ -1758,7 +1758,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
       {activeView === "archivados" && <section className="archived-section">
         <div className="archived-heading"><div><p className="eyebrow">DOCUMENTOS OCULTOS</p><h2>Archivados</h2><p>Estos documentos no aparecen en la operación diaria, pero conservan todo su historial.</p></div><strong>{archivedDocuments.length} archivados</strong></div>
         {archivedDocuments.length === 0 ? <p className="empty-state">No hay documentos archivados.</p> : <div className="documents-list">
-          {archivedDocuments.map((document) => <article className="document-row archived-row" key={document.id}><div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span><span>Archivado: {formatOfficeDateTime(document.archived_at)}</span></div><div className="row-actions"><button onClick={() => restoreDocument(document)} disabled={documentSaveBlocked}><Icon name="history" />Restaurar</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}><Icon name="history" />Historial</button>{canManageAll && <ActionButton type="button" icon="trash" className="danger-button" onClick={() => prepareDeletion(document)} disabled={documentSaveBlocked}>Eliminar definitivamente</ActionButton>}</div></article>)}
+          {archivedDocuments.map((document) => <article className="document-row archived-row" data-status={document.status} key={document.id}><div><strong>{document.case_files.number} · {formatDocumentName(document)}</strong><span>{document.agencies.name} — {formatStatus(document.status)}</span><span>Archivado: {formatOfficeDateTime(document.archived_at)}</span></div><div className="row-actions"><button onClick={() => restoreDocument(document)} disabled={documentSaveBlocked}><Icon name="history" />Restaurar</button><button className="secondary" onClick={() => showHistory(document)} disabled={busy}><Icon name="history" />Historial</button>{canManageAll && <ActionButton type="button" icon="trash" className="danger-button" onClick={() => prepareDeletion(document)} disabled={documentSaveBlocked}>Eliminar definitivamente</ActionButton>}</div></article>)}
         </div>}
       </section>}
       {deletePreview && <DocumentDeletionDialog key={deletePreview.id} document={deletePreview} name={formatDocumentName(deletePreview)} busy={busy} pending={pendingDeletion} message={message?.scope === "documentDeletion" ? message : null} onClose={() => { if (!deletionInFlight.current && !deletionClient.hasPending()) { setDeletePreview(null); setMessage(null); } }} onDelete={deleteArchivedDocument} onVerify={() => deleteArchivedDocument(null, true)} />}
@@ -1787,7 +1787,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
                   </div>
                   <div className="case-document-status">
                     <span>Estatus</span>
-                    <b>{formatStatus(document.status)}</b>
+                    <b className="document-status" data-status={document.status}>{formatStatus(document.status)}</b>
                     {latestReceiptFor(document.id) && <small>Boleta: {latestReceiptFor(document.id)}</small>}
                   </div>
                   <div className="case-document-date">
@@ -1824,7 +1824,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
             <p className="history-document-name">{formatDocumentName(historyPreview.document)} · {historyPreview.document.agencies.name}</p>
             <ol className="timeline">
               {historyPreview.movements.map((movement) => (
-                <li key={movement.id}><span>{formatOfficeDateTime(movement.occurred_at)}</span><strong>{formatStatus(movement.status)}</strong>{movement.receipt_number && <p><b>Boleta:</b> {movement.receipt_number}</p>}{movement.rejection_reason && <p><b>Motivo:</b> {movement.rejection_reason}</p>}{movement.notes && <p><b>Observaciones:</b> {movement.notes}</p>}</li>
+                <li key={movement.id}><span>{formatOfficeDateTime(movement.occurred_at)}</span><strong className="document-status" data-status={movement.status}>{formatStatus(movement.status)}</strong>{movement.receipt_number && <p><b>Boleta:</b> {movement.receipt_number}</p>}{movement.rejection_reason && <p><b>Motivo:</b> {movement.rejection_reason}</p>}{movement.notes && <p><b>Observaciones:</b> {movement.notes}</p>}</li>
               ))}
             </ol>
           </section>

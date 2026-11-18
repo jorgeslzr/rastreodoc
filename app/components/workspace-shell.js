@@ -13,6 +13,7 @@ const navigationIcons = {
 function NavigationItems({ items, activeView, onNavigate }) {
   return items.map(([view, label]) => <button type="button" key={view}
     className={activeView === view ? "active" : ""}
+    aria-label={label} title={label}
     aria-current={activeView === view ? "page" : undefined}
     onClick={() => onNavigate(view)}>
     <Icon name={navigationIcons[view]} /><span>{label}</span>
@@ -78,6 +79,7 @@ export default function WorkspaceShell({ children, activeView, title, eyebrow, n
     <div className="workspace-main">
       <header className="workspace-topbar">
         <button type="button" className="menu-toggle" ref={menuToggle} aria-label="Abrir menú de navegación" aria-expanded={menuOpen} aria-controls="workspace-navigation" onClick={() => setMenuOpen((open) => !open)}><Icon name="menu" /></button>
+        <div className="topbar-brand"><Brand compact /></div>
         <label className={`workspace-search${searchEnabled ? "" : " search-reference"}`}>
           <Icon name="search" /><span className="sr-only">Buscar documentos</span>
           <input aria-label="Buscar documentos" value={searchEnabled ? search : ""} onChange={(event) => onSearch(event.target.value)} disabled={!searchEnabled}
