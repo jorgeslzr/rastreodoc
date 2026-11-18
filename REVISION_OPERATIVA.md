@@ -16,7 +16,9 @@ emulado; también casos con una categoría y solo documentos archivados.
 Las pruebas existentes de navegación visual y reportes continuaron pasando.
 Compilación correcta y lint sin errores, con la advertencia previa del `<img>`
 del QR. No requiere SQL ni cambios de datos o permisos.
-La entrega se prepara en Preview. Producción sigue en `cb463b2` hasta aprobación.
+El usuario autorizó expresamente publicar esta mejora el 18 de noviembre.
+La versión visual y funcional aprobada es `626d785`; los cambios posteriores
+solo registran la autorización. Se publica desde `main` con las variables reales.
 
 ## Nueva identidad visual — 18 de noviembre de 2026
 
