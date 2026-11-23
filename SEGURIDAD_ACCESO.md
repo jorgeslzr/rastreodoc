@@ -31,3 +31,9 @@ La protección real requiere instalar tanto el código como la migración y veri
 El 23 de noviembre de 2026 pasaron 81 pruebas de JavaScript, 55 de PostgreSQL local y 63 de navegador: 199 en total. Incluyen bloqueo por perfil ausente, fallo de permisos, revocación, permisos administrativos del servidor, políticas antiguas permisivas, operaciones atómicas, captura, QR, impresión, reportes y vistas de escritorio/tablet/teléfono. La compilación de producción terminó correctamente. ESLint no reportó errores; conserva la advertencia previa del elemento de imagen QR.
 
 Se comprobó por lectura de los ajustes públicos de Supabase que el registro de nuevos usuarios está cerrado y el acceso por correo continúa activo. Esto no verifica los perfiles, las políticas ni las sesiones existentes de producción. La consulta del responsable, la revisión de Preview y la instalación de la migración en Supabase aún requieren comprobación administrativa.
+
+## Autorización de publicación — 23 de noviembre de 2026
+
+El responsable comprobó su perfil explícito de administrador y revisó las seis cuentas existentes, todas con perfil asignado. No se modificaron los permisos de las demás cuentas. La migración se instaló en el proyecto Free de pruebas: nueve tablas con restricciones, dos funciones protegidas y usuario de pruebas autorizado. El responsable confirmó ingreso, captura de expediente y documento, generación de QR y consulta en Reportes desde Preview.
+
+Después de esas comprobaciones, autorizó expresamente publicar la actualización de seguridad. La implementación revisada es `3136cc92e226343b830bdbd27de6a05de5b0a233`. Se publicará desde `main` con las variables de producción y se comprobarán el código servido, las cabeceras de protección y el rechazo de operaciones de usuarios sin sesión. Después corresponde instalar y verificar la migración en Supabase de producción. Los datos personales de la cuenta responsable y su reparación están fuera del repositorio.
