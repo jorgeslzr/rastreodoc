@@ -8,6 +8,30 @@ function deferred() {
   return { promise, resolve };
 }
 
+test("authorization finishes before any office data query begins", async () => {
+  const access = deferred();
+  const calls = [];
+  const loading = loadCompleteData([() => { calls.push("data"); return { data: [] }; }], {
+    beforeLoad: async () => { calls.push("profile"); await access.promise; },
+  });
+  await Promise.resolve();
+  assert.deepEqual(calls, ["profile"]);
+  access.resolve();
+  assert.deepEqual(await loading, [[]]);
+  assert.deepEqual(calls, ["profile", "data"]);
+});
+
+test("denied or stalled authorization never starts office data queries", async () => {
+  let queries = 0;
+  const loaders = [() => { queries++; return { data: [] }; }];
+  await assert.rejects(loadCompleteData(loaders, { beforeLoad: () => { throw new Error("denied"); } }), /denied/);
+  const access = deferred();
+  await assert.rejects(loadCompleteData(loaders, { beforeLoad: () => access.promise, timeoutMs: 10 }), { name: "TimeoutError" });
+  access.resolve();
+  await new Promise(setImmediate);
+  assert.equal(queries, 0);
+});
+
 test("all required reads run together and publish one complete ordered result", async () => {
   const last = deferred();
   const started = [];

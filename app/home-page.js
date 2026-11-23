@@ -16,6 +16,7 @@ import { findCatalogRecord, indexReportMovements } from "@/lib/office-lookups.mj
 import { buildQrPrintHtml, createQrImageCache, preloadQrLibrary } from "@/lib/qr-labels.mjs";
 import { authErrorMessage, createSessionRecovery, withAuthDeadline } from "@/lib/auth-recovery.mjs";
 import { formatOfficeDateTime, matchesReportDateRange, officeDateKey, reportDateRangeError } from "@/lib/office-dates.mjs";
+import { OfficeAccessError, requireOfficeProfile } from "@/lib/office-access.mjs";
 import { dataLoadErrorMessage, loadCompleteData } from "@/lib/data-loading.mjs";
 
 const supabase = createClient();
@@ -332,7 +333,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const scanInputRef = useRef(null);
   const [message, setMessage] = useState(null);
-  const [currentRole, setCurrentRole] = useState("admin");
+  const [currentRole, setCurrentRole] = useState(null);
   const [currentUsername, setCurrentUsername] = useState("");
   const [profiles, setProfiles] = useState([]);
   const [newUsername, setNewUsername] = useState("");
@@ -412,7 +413,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
       getSession: () => supabase.auth.getSession(),
       onSession: (nextSession) => {
         setSession(nextSession);
-        if (!nextSession) setDataLoad(null);
+        if (!nextSession) { setDataLoad(null); setCurrentRole(null); }
       },
       onError: setSessionRecoveryError,
       onLoading: setLoadingSession,
@@ -454,8 +455,14 @@ export default function HomePage({ initialView = "panel" } = {}) {
       (signal) => fetchDocuments(false, signal),
       (signal) => fetchDocuments(true, signal),
       (signal) => fetchReportMovements(signal),
-    ], { signal: controller.signal }).then(([loadedCases, loadedTypes, loadedAgencies, loadedLawyers, loadedAuxiliaries, loadedMunicipalities, loadedProfiles, loadedDocuments, loadedArchives, loadedMovements]) => {
+    ], { signal: controller.signal, beforeLoad: async (signal) => {
+      const { data: profile, error } = await supabase.from("profiles")
+        .select("id, username, role").eq("id", sessionUserId).maybeSingle().abortSignal(signal);
+      if (error) throw error;
+      requireOfficeProfile(profile, sessionUserId);
+    } }).then(([loadedCases, loadedTypes, loadedAgencies, loadedLawyers, loadedAuxiliaries, loadedMunicipalities, loadedProfiles, loadedDocuments, loadedArchives, loadedMovements]) => {
       if (!active) return;
+      const sessionProfile = requireOfficeProfile(loadedProfiles.find((profile) => profile.id === sessionUserId), sessionUserId);
       setCaseFiles(loadedCases);
       setDocumentTypes(loadedTypes);
       setAgencies(loadedAgencies);
@@ -470,8 +477,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
       setAuxiliaries(loadedAuxiliaries);
       setMunicipalities(loadedMunicipalities);
       setProfiles(loadedProfiles);
-      const sessionProfile = loadedProfiles.find((profile) => profile.id === sessionUserId);
-      setCurrentRole(sessionProfile?.role ?? "admin");
+      setCurrentRole(sessionProfile.role);
       setCurrentUsername(sessionProfile?.username ?? sessionEmail?.split("@")[0] ?? "usuario");
       setDocuments(loadedDocuments.map(attachCatalogs));
       setArchivedDocuments(loadedArchives.map(attachCatalogs));
@@ -479,7 +485,7 @@ export default function HomePage({ initialView = "panel" } = {}) {
       setDataLoad({ userId: sessionUserId, email: sessionEmail, attempt: dataLoadAttempt, status: "ready", error: null });
       if (sessionProfile?.role === "admin") refreshStorageUsage();
     }).catch((error) => {
-      if (active) setDataLoad({ userId: sessionUserId, email: sessionEmail, attempt: dataLoadAttempt, status: "error", error: dataLoadErrorMessage(error) });
+      if (active) setDataLoad({ userId: sessionUserId, email: sessionEmail, attempt: dataLoadAttempt, status: error instanceof OfficeAccessError ? "denied" : "error", error: error instanceof OfficeAccessError ? error.message : dataLoadErrorMessage(error) });
     });
     return () => { active = false; controller.abort(); };
   }, [sessionUserId, sessionEmail, dataLoadAttempt]);
@@ -1399,12 +1405,13 @@ export default function HomePage({ initialView = "panel" } = {}) {
 
   const dataIsCurrent = dataLoad?.userId === sessionUserId && dataLoad?.email === sessionEmail && dataLoad?.attempt === dataLoadAttempt;
   if (!dataIsCurrent || dataLoad.status !== "ready") {
-    const failed = dataIsCurrent && dataLoad.status === "error";
+    const denied = dataIsCurrent && dataLoad.status === "denied";
+    const failed = dataIsCurrent && ["error", "denied"].includes(dataLoad.status);
     return <><BrandHeader /><main className="center-shell"><section className="panel data-load-panel" aria-busy={!failed}>
       <p className="eyebrow">RASTREADOC</p>
-      <h1>{failed ? "No se pudo cargar la información" : "Cargando información…"}</h1>
+      <h1>{denied ? "Acceso pendiente de autorización" : failed ? "No se pudo cargar la información" : "Cargando información…"}</h1>
       <p role={failed ? "alert" : "status"}>{failed ? dataLoad.error : "Estamos cargando tus expedientes y documentos. Espera un momento."}</p>
-      {failed && <button onClick={() => setDataLoadAttempt((attempt) => attempt + 1)}>Reintentar carga</button>}
+      {failed && <button onClick={() => setDataLoadAttempt((attempt) => attempt + 1)}>{denied ? "Revisar acceso" : "Reintentar carga"}</button>}
       <button className="secondary" onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
     </section></main></>;
   }

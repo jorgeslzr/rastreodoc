@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { authorizeUserAdministration } from "@/lib/office-access.mjs";
 
 const USER_DOMAIN = "usuarios.rastreadoc.mx";
 const ALLOWED_ROLES = ["admin", "supervisor", "empleado", "consulta"];
@@ -13,36 +14,14 @@ function usernameToEmail(username) {
 
 
 async function getAuthorizedAdminClient(request) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    return { response: Response.json({ error: "Falta configurar SUPABASE_SERVICE_ROLE_KEY en Vercel." }, { status: 500 }) };
-  }
-
-  const token = request.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return { response: Response.json({ error: "Sesión requerida." }, { status: 401 }) };
-
-  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
+  return authorizeUserAdministration(request, () => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !serviceRoleKey) throw new Error("Missing server configuration");
+    return createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
   });
-
-  const { data: requesterData, error: requesterError } = await adminClient.auth.getUser(token);
-  if (requesterError || !requesterData.user) {
-    return { response: Response.json({ error: "Sesión inválida." }, { status: 401 }) };
-  }
-
-  const { data: requesterProfile } = await adminClient
-    .from("profiles")
-    .select("role")
-    .eq("id", requesterData.user.id)
-    .maybeSingle();
-  const requesterRole = requesterProfile?.role ?? "admin";
-  if (!["admin", "supervisor"].includes(requesterRole)) {
-    return { response: Response.json({ error: "No tienes permiso para administrar usuarios." }, { status: 403 }) };
-  }
-
-  return { adminClient, requesterId: requesterData.user.id };
 }
 export async function POST(request) {
   const { adminClient, response } = await getAuthorizedAdminClient(request);

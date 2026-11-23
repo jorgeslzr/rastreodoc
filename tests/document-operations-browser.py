@@ -213,6 +213,12 @@ class SupabaseFixture:
                 return
             query = parse_qs(parsed.query)
             self.reads.append({"table": table, "query": query})
+            if table == "profiles" and self.scenario == "access_profile_error":
+                self.fulfill(route, {"code": "503", "message": "Fictional profile failure"}, 503)
+                return
+            if table == "profiles" and self.scenario == "access_revoked" and "id" not in query:
+                self.fulfill(route, [])
+                return
             if self.scenario == "load_delayed" and table == "case_files":
                 self.held_load = (route, copy.deepcopy(self.rows[table]))
                 return
@@ -260,6 +266,8 @@ class SupabaseFixture:
                     rows = [row for row in rows if row.get("document_id", row.get("documents", {}).get("id")) == identifier]
             else:
                 rows = copy.deepcopy(self.rows.get(table, []))
+                if table == "profiles" and "id" in query:
+                    rows = [row for row in rows if row["id"] == query["id"][0].removeprefix("eq.")]
                 if table == "case_files":
                     if "id" in query:
                         if self.scenario == "case_verify_expired":
@@ -424,6 +432,52 @@ class BrowserOperations(unittest.TestCase):
         expect(page.locator(".workspace-app")).to_be_visible()
         expect(page.get_by_text("prueba", exact=True).first).to_be_visible()
         return page, fixture
+
+    def test_access_missing_invalid_or_mismatched_profile_never_reads_office_data(self):
+        for profiles in [[], [{"id": USER_ID, "role": "owner"}], [{"id": "someone-else", "role": "admin"}]]:
+            with self.subTest(profiles=profiles):
+                page, fixture = self.open_login("access_denied", configure=lambda fixture: fixture.rows.update(profiles=profiles))
+                page.get_by_label("Usuario o correo").fill("prueba")
+                page.get_by_label("Contraseña", exact=True).fill("fictional-test-password")
+                page.get_by_role("button", name="Ingresar", exact=True).click()
+                expect(page.get_by_role("heading", name="Acceso pendiente de autorización")).to_be_visible()
+                expect(page.locator(".workspace-app")).to_have_count(0)
+                self.assertTrue(fixture.reads)
+                self.assertTrue(all(read["table"] == "profiles" for read in fixture.reads))
+                expect(page.get_by_role("button", name="Cerrar sesión", exact=True)).to_be_visible()
+
+    def test_access_profile_failure_can_retry_without_querying_documents_early(self):
+        page, fixture = self.open_login("access_profile_error")
+        page.get_by_label("Usuario o correo").fill("prueba")
+        page.get_by_label("Contraseña", exact=True).fill("fictional-test-password")
+        page.get_by_role("button", name="Ingresar", exact=True).click()
+        expect(page.get_by_role("button", name="Reintentar carga", exact=True)).to_be_visible(timeout=24000)
+        self.assertTrue(all(read["table"] == "profiles" for read in fixture.reads))
+        fixture.scenario = "normal"
+        page.get_by_role("button", name="Reintentar carga", exact=True).click()
+        expect(page.locator(".workspace-app")).to_be_visible()
+        self.assertTrue(any(read["table"] == "documents" for read in fixture.reads))
+
+    def test_access_revoked_during_load_cannot_publish_a_workspace(self):
+        page, fixture = self.open_login("access_revoked")
+        page.get_by_label("Usuario o correo").fill("prueba")
+        page.get_by_label("Contraseña", exact=True).fill("fictional-test-password")
+        page.get_by_role("button", name="Ingresar", exact=True).click()
+        expect(page.get_by_role("heading", name="Acceso pendiente de autorización")).to_be_visible()
+        expect(page.locator(".workspace-app")).to_have_count(0)
+        self.assertEqual(fixture.reads[0]["table"], "profiles")
+
+    def test_access_server_rejects_unauthenticated_user_mutations_and_sends_protection_headers(self):
+        # Requests go to the local Next server, without a Supabase session.
+        context = self.browser.new_context()
+        self.addCleanup(context.close)
+        for method in ["POST", "PATCH", "DELETE"]:
+            response = context.request.fetch(self.base_url + "/api/users", method=method, data="invalid-json")
+            self.assertEqual(response.status, 401)
+        response = context.request.get(self.base_url + "/")
+        self.assertEqual(response.headers.get("x-frame-options"), "DENY")
+        self.assertEqual(response.headers.get("x-content-type-options"), "nosniff")
+        self.assertIn("frame-ancestors 'none'", response.headers.get("content-security-policy", ""))
 
     def failed_login_then_retry(self, scenario, expected):
         page, fixture = self.open_login(scenario)

@@ -22,6 +22,8 @@ import uuid
 REPOSITORY = Path(__file__).resolve().parents[1]
 MIGRATION = REPOSITORY / "supabase/migrations/20261110_atomic_document_operations.sql"
 DELETION_MIGRATION = REPOSITORY / "supabase/migrations/20261113_delete_archived_document.sql"
+SECURITY_MIGRATION = REPOSITORY / "supabase/migrations/20261123_office_access.sql"
+OUTSIDER = "00000000-0000-0000-0000-000000000003"
 ACTOR = "00000000-0000-0000-0000-000000000001"
 OTHER_ACTOR = "00000000-0000-0000-0000-000000000002"
 AGENCY = "00000000-0000-0000-0000-000000000010"
@@ -71,6 +73,7 @@ class DatabaseOperations(unittest.TestCase):
         cls.run_sql("""
           create role anon nologin;
           create role authenticated nologin;
+          create role service_role nologin bypassrls;
           create schema auth;
           grant usage on schema auth to authenticated;
           create table auth.users(id uuid primary key);
@@ -86,9 +89,12 @@ class DatabaseOperations(unittest.TestCase):
         cls.run_sql(MIGRATION.read_text())
         cls.run_sql(DELETION_MIGRATION.read_text())
         cls.run_sql(DELETION_MIGRATION.read_text())
+        cls.run_sql(SECURITY_MIGRATION.read_text())
+        cls.run_sql(SECURITY_MIGRATION.read_text())
         cls.run_sql(schema)
         cls.run_sql(f"""
-          insert into auth.users values ('{ACTOR}'), ('{OTHER_ACTOR}');
+          insert into auth.users values ('{ACTOR}'), ('{OTHER_ACTOR}'), ('{OUTSIDER}');
+          insert into public.profiles(id,username,role) values ('{ACTOR}','local-admin','admin'), ('{OTHER_ACTOR}','local-operator','empleado');
           insert into public.agencies(id,name) values ('{AGENCY}', 'REGISTRO PÚBLICO');
           insert into public.document_types(id,name) values ('{CERTIFICATE}', 'CERTIFICADO'), ('{ISAI}', 'ISAI');
           insert into public.case_files(id,number) values ('{CASE_FILE}', 'PRUEBA-LOCAL');
@@ -120,6 +126,10 @@ class DatabaseOperations(unittest.TestCase):
             raise AssertionError(result.stderr)
         return result.stdout.strip()
 
+    def setUp(self):
+        self.run_sql(f"update public.profiles set role='admin' where id='{ACTOR}';")
+        self.run_sql(f"insert into public.profiles(id,username,role) values ('{OTHER_ACTOR}','local-operator','empleado') on conflict(id) do update set role='empleado';")
+
     def new_document(self, document_type=CERTIFICATE):
         identifier = str(uuid.uuid4())
         self.run_sql(f"""
@@ -148,6 +158,114 @@ class DatabaseOperations(unittest.TestCase):
     def save(self, snapshot, operation_id=None, actor=ACTOR, error=None, **changes):
         output = self.run_sql(self.operation_sql(snapshot, operation_id, **changes), actor=actor, error=error)
         return None if error else json.loads(output)
+
+    def test_security_privileged_server_can_manage_profiles_after_rls_hardening(self):
+        identifier = str(uuid.uuid4())
+        self.run_sql(f"insert into auth.users(id) values ('{identifier}');")
+        self.run_sql(f"set role service_role; insert into public.profiles(id,username,role) values ('{identifier}','server-{identifier}','consulta') on conflict(id) do update set role=excluded.role;")
+        self.assertEqual(self.run_sql(f"set role service_role; select role from public.profiles where id='{identifier}';"), 'consulta')
+        self.run_sql(f"set role service_role; delete from public.profiles where id='{identifier}';")
+        self.run_sql(f"delete from auth.users where id='{identifier}';")
+
+    def test_security_review_runs_read_only_and_reports_effective_policies(self):
+        before = self.run_sql("select count(*) from public.documents;")
+        output = self.run_sql((REPOSITORY / 'scripts/revision-seguridad.sql').read_text())
+        self.assertIn('documents|t|t|t', output)
+        self.assertIn('save_document_operation', output)
+        self.assertEqual(self.run_sql("select count(*) from public.documents;"), before)
+
+    def test_security_no_profile_cannot_read_any_office_table(self):
+        self.new_document()
+        for table in ['profiles', 'agencies', 'document_types', 'lawyers', 'auxiliaries', 'municipalities', 'case_files', 'documents', 'movements']:
+            with self.subTest(table=table):
+                self.assertEqual(self.run_sql(f"select count(*) from public.{table};", actor=OUTSIDER), '0')
+        self.run_sql(f"insert into public.case_files(number) values ('UNAUTHORIZED');", actor=OUTSIDER, error='42501')
+
+    def test_security_no_profile_cannot_bypass_rls_through_definer_rpcs(self):
+        original = self.new_document()
+        self.save(original, actor=OUTSIDER, p_requested_status='ENVIADO', p_receipt_number='BLOCKED', error='PT403')
+        self.run_sql(f"update public.documents set archived_at=clock_timestamp() where id={literal(original['id'])};")
+        self.run_sql(f"select public.restore_archived_document({literal(original['id'])});", actor=OUTSIDER, error='PT403')
+        self.assertIsNotNone(self.document(original['id'])['archived_at'])
+        self.assertEqual(self.movement_count(original['id']), 1)
+
+    def test_security_profile_deletion_revokes_an_existing_session(self):
+        original = self.new_document()
+        self.assertEqual(self.run_sql("select count(*) from public.documents;", actor=OTHER_ACTOR).isdigit(), True)
+        self.run_sql(f"delete from public.profiles where id='{OTHER_ACTOR}';")
+        self.assertEqual(self.run_sql("select count(*) from public.documents;", actor=OTHER_ACTOR), '0')
+        self.save(original, actor=OTHER_ACTOR, p_requested_status='ENVIADO', p_receipt_number='REVOKED', error='PT403')
+
+    def test_security_profile_visibility_and_self_promotion_are_restricted(self):
+        self.run_sql(f"update public.profiles set role='consulta' where id='{OTHER_ACTOR}';")
+        self.assertEqual(self.run_sql("select count(*) from public.profiles;", actor=OTHER_ACTOR), '1')
+        self.assertEqual(self.run_sql("select id from public.profiles;", actor=OTHER_ACTOR), OTHER_ACTOR)
+        self.assertGreaterEqual(int(self.run_sql("select count(*) from public.profiles;", actor=ACTOR)), 2)
+        self.run_sql(f"update public.profiles set role='admin' where id='{OTHER_ACTOR}';", actor=OTHER_ACTOR, error='42501')
+        self.run_sql(f"insert into public.profiles(id,username,role) values ('{OUTSIDER}','attacker','admin');", actor=OUTSIDER, error='42501')
+
+    def test_security_old_permissive_policies_cannot_override_restrictions(self):
+        original = self.new_document()
+        self.run_sql("grant update on public.profiles to authenticated; create policy fictional_permissive on public.profiles for all to authenticated using (true) with check (true);")
+        try:
+            self.run_sql(f"update public.profiles set role='admin' where id='{OTHER_ACTOR}';", actor=OTHER_ACTOR)
+            self.assertEqual(self.run_sql(f"select role from public.profiles where id='{OTHER_ACTOR}';"), 'empleado')
+            self.assertEqual(self.run_sql("select count(*) from public.profiles;", actor=OUTSIDER), '0')
+        finally:
+            self.run_sql("drop policy fictional_permissive on public.profiles; revoke update on public.profiles from authenticated;")
+        self.run_sql("grant select on public.documents to anon;")
+        try:
+            self.assertEqual(self.run_sql("set role anon; select count(*) from public.documents;"), '0')
+        finally:
+            self.run_sql("revoke select on public.documents from anon;")
+        self.assertEqual(self.movement_count(original['id']), 1)
+
+    def test_security_consulta_reads_and_restores_but_cannot_capture_or_send(self):
+        original = self.new_document()
+        self.run_sql(f"update public.profiles set role='consulta' where id='{OTHER_ACTOR}';")
+        self.assertEqual(self.run_sql(f"select id from public.documents where id={literal(original['id'])};", actor=OTHER_ACTOR), original['id'])
+        self.run_sql("insert into public.case_files(number) values ('CONSULTA-BLOCKED');", actor=OTHER_ACTOR, error='42501')
+        self.save(original, actor=OTHER_ACTOR, p_requested_status='ENVIADO', p_receipt_number='NO', error='PT403')
+        self.run_sql(f"update public.documents set archived_at=clock_timestamp() where id={literal(original['id'])};", actor=OTHER_ACTOR)
+        self.assertIsNone(self.document(original['id'])['archived_at'])
+        self.run_sql(f"update public.documents set archived_at=clock_timestamp() where id={literal(original['id'])};", actor=ACTOR)
+        self.assertEqual(self.run_sql(f"select public.restore_archived_document({literal(original['id'])});", actor=OTHER_ACTOR), 't')
+        self.assertIsNone(self.document(original['id'])['archived_at'])
+        self.run_sql(f"update public.documents set archived_at=clock_timestamp() where id={literal(original['id'])};", actor=ACTOR)
+        self.run_sql(f"update public.documents set archived_at=null where id={literal(original['id'])};", actor=OTHER_ACTOR)
+        self.assertIsNone(self.document(original['id'])['archived_at'])
+
+    def test_security_employee_captures_and_sends_but_cannot_correct_or_delete_catalogs(self):
+        identifier = str(uuid.uuid4())
+        self.run_sql(f"insert into public.documents(id,case_file_id,document_type_id,agency_id,label) values ('{identifier}','{CASE_FILE}','{CERTIFICATE}','{AGENCY}','Empleado');", actor=OTHER_ACTOR)
+        original = self.document(identifier)
+        self.assertEqual(self.movement_count(identifier), 1)
+        self.save(original, actor=OTHER_ACTOR, p_change_label=True, p_label='Forbidden', error='PT403')
+        self.save(original, actor=OTHER_ACTOR, p_is_correction=True, p_requested_status='AUTORIZADO', error='PT403')
+        result = self.save(original, actor=OTHER_ACTOR, p_requested_status='ENVIADO', p_receipt_number='EMPLOYEE-OK')
+        self.assertEqual(result['document']['status'], 'ENVIADO')
+        self.assertEqual(self.movement_count(identifier), 2)
+        self.run_sql("insert into public.agencies(name) values ('CAPTURA-AUTORIZADA');", actor=OTHER_ACTOR)
+        self.run_sql("delete from public.agencies where name='CAPTURA-AUTORIZADA';", actor=OTHER_ACTOR)
+        self.assertEqual(self.run_sql("select count(*) from public.agencies where name='CAPTURA-AUTORIZADA';"), '1')
+        self.run_sql("delete from public.agencies where name='CAPTURA-AUTORIZADA';", actor=ACTOR)
+        self.assertEqual(self.run_sql("select count(*) from public.agencies where name='CAPTURA-AUTORIZADA';"), '0')
+
+    def test_security_column_grants_prevent_document_tampering_and_direct_deletion(self):
+        original = self.new_document()
+        for assignment in ["label='Forged'", "status='AUTORIZADO'", "case_file_id=case_file_id", "qr_token=gen_random_uuid()"]:
+            self.run_sql(f"update public.documents set {assignment} where id={literal(original['id'])};", actor=ACTOR, error='42501')
+        self.run_sql(f"delete from public.documents where id={literal(original['id'])};", actor=ACTOR, error='42501')
+        self.assertEqual(self.document(original['id']), original)
+
+    def test_security_migration_refuses_to_lock_out_an_unprofiled_administrator(self):
+        database = self.new_empty_setup_database()
+        old_schema = (REPOSITORY / 'supabase/schema.sql').read_text().split('-- Acceso exclusivo para cuentas con perfil autorizado por la oficina.')[0]
+        self.run_sql(old_schema, database=database)
+        self.run_sql(f"insert into auth.users(id) values ('{OUTSIDER}');", database=database)
+        before = self.run_sql("select count(*) from pg_policies where policyname='office_members_only';", database=database)
+        self.run_sql(SECURITY_MIGRATION.read_text(), database=database, error='P0001')
+        self.assertEqual(self.run_sql("select count(*) from pg_policies where policyname='office_members_only';", database=database), before)
 
     def new_empty_setup_database(self):
         # Each setup scenario starts with a separate local database. Roles are
@@ -373,11 +491,11 @@ class DatabaseOperations(unittest.TestCase):
             self.run_sql(f"""
               insert into public.movements(document_id,status,created_by)
               values ({literal(original["id"])}, 'AUTORIZADO', {literal(ACTOR)});
-              update public.documents set label='Legacy allowed again'
-              where id={literal(original["id"])};
+
             """, actor=ACTOR)
             self.assertEqual(self.movement_count(original["id"]), 3)
-            self.assertEqual(self.document(original["id"])["label"], "Legacy allowed again")
+            self.run_sql(f"update public.documents set label='Legacy correction' where id={literal(original['id'])};", actor=ACTOR, error="42501")
+            self.assertEqual(self.document(original["id"])["label"], "Original")
             receipts = self.run_sql(f"select count(*) from public.document_operation_receipts where document_id={literal(original['id'])};")
             self.assertEqual(receipts, "1")
             current = self.document(original["id"])
@@ -386,6 +504,7 @@ class DatabaseOperations(unittest.TestCase):
             self.assertEqual(self.movement_count(original["id"]), 4)
         finally:
             self.run_sql(MIGRATION.read_text())
+            self.run_sql(SECURITY_MIGRATION.read_text())
 
     def test_server_confirms_state_and_timestamp(self):
         original = self.new_document()
@@ -624,7 +743,7 @@ class DatabaseOperations(unittest.TestCase):
         original = self.new_document()
         for assignment in ["label='Legacy correction'", "status='AUTORIZADO'", "last_movement_at=clock_timestamp()+interval '1 day'"]:
             with self.subTest(assignment=assignment):
-                self.run_sql(f"update public.documents set {assignment} where id={literal(original['id'])};", actor=ACTOR, error="PT409")
+                self.run_sql(f"update public.documents set {assignment} where id={literal(original['id'])};", actor=ACTOR, error="42501")
                 stored = self.document(original["id"])
                 self.assertEqual(stored["label"], "Original")
                 self.assertEqual(stored["status"], "EN_OFICINA")
